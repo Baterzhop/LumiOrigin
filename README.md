@@ -31,3 +31,25 @@
 ```bash
 git clone https://github.com/Baterzhop/LumiOrigin.git
 cd LumiOrigin
+## 🧪 Getting Started with Xcode Project
+
+To launch LumiOrigin as a full macOS SwiftUI app:
+
+1. Add `LumiOriginApp.swift` with `@main` entry point.
+2. Open the folder in **Xcode**.
+3. Set `LumiOriginApp.swift` as the entry point if needed.
+4. Run on simulator or Mac.
+
+Sample content for `LumiOriginApp.swift`:
+
+```swift
+import SwiftUI
+
+@main
+struct LumiOriginApp: App {
+    var body: some Scene {
+        WindowGroup {
+            LumiInterface()
+        }
+    }
+}
