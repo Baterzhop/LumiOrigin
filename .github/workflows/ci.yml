@@ -20,3 +20,6 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+      - name: CLI smoke test
+        if: matrix.os == 'ubuntu-latest'
+        run: swift run LumiOrigin
