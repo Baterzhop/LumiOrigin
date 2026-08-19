@@ -2,12 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, "lumi-v3/**"]
+    branches: [main, "lumi-v3-*"]
   pull_request:
 
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
@@ -15,5 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Swift version
         run: swift --version
+      - name: Build
+        run: swift build
       - name: Test
         run: swift test
