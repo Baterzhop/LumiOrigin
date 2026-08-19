@@ -1,55 +1,86 @@
-# LumiOrigin
+# LumiOrigin V3
 
-> 🧠 An experimental autonomous AI core, written in Swift, designed to simulate self-reflection, intent detection, emotional response, and memory-based reasoning. Powered by modules like AeonCore, Reflector, SelfCoder, and a SwiftUI interface.
+LumiOrigin is a small, local-first AI application written in Swift. V3 replaces the original collection of global singletons with an explicit, testable architecture.
 
----
+## Design principles
 
-## 📦 Architecture
+- **No simulated sentience claims.** Reflection is a journal of inputs, intents, and response previews.
+- **Local-first.** Lumi talks to a local Ollama-compatible endpoint by default and degrades to a deterministic fallback when the model is offline.
+- **Explicit state.** Conversation memory, knowledge retrieval, prompt profiles, and reflection history are separate components.
+- **Bounded memory.** The app does not silently accumulate unlimited conversation state.
+- **Testable core.** `LumiCore` has no SwiftUI dependency and can be tested on macOS or Linux.
+- **Replaceable providers.** The model client and knowledge layer are behind small interfaces/components, so remote APIs or a true dense retriever can be added without rewriting the UI.
 
-- `AeonCore.swift` — main cognitive core, emotional logic, short-term memory
-- `IntentEngine.swift` — intent detection and labeling module
-- `Reflector.swift` — internal self-assessment and observation
-- `SelfCoder.swift` — allows Lumi to save, compare, and rewrite code snippets
-- `LumiApp.swift` — command router & integration core
-- `LumiInterface.swift` — SwiftUI-based interface to interact with Lumi
+## Architecture
 
----
+```text
+SwiftUI
+  ↓
+ChatViewModel
+  ↓
+LumiEngine
+  ├─ IntentRouter
+  ├─ PromptRegistry
+  ├─ MemoryStore
+  ├─ KnowledgeIndex (local BM25 + overlap hybrid)
+  ├─ ReflectionJournal
+  └─ LLMClient
+       ├─ OllamaClient
+       └─ LocalFallbackClient
+```
 
-## 🧠 Features
+## Requirements
 
-- Emotional context & reasoning
-- Intent recognition
-- Self-observation and summarization
-- Self-coding memory (can track and compare changes)
-- Lightweight interface with SwiftUI
+- macOS 13+
+- Swift 5.9+
+- Optional: Ollama or another Ollama-compatible chat endpoint
 
----
+Default model settings:
 
-## 🚀 How to Run
-
-1. Clone this repo:
 ```bash
-git clone https://github.com/Baterzhop/LumiOrigin.git
-cd LumiOrigin
-## 🧪 Getting Started with Xcode Project
+export LUMI_OLLAMA_URL=http://127.0.0.1:11434/api/chat
+export LUMI_OLLAMA_MODEL=llama3.2
+```
 
-To launch LumiOrigin as a full macOS SwiftUI app:
+## Run
 
-1. Add `LumiOriginApp.swift` with `@main` entry point.
-2. Open the folder in **Xcode**.
-3. Set `LumiOriginApp.swift` as the entry point if needed.
-4. Run on simulator or Mac.
+```bash
+swift run LumiOrigin
+```
 
-Sample content for `LumiOriginApp.swift`:
+Open the package in Xcode to run the native SwiftUI app.
 
-```swift
-import SwiftUI
+## Test
 
-@main
-struct LumiOriginApp: App {
-    var body: some Scene {
-        WindowGroup {
-            LumiInterface()
-        }
-    }
-}
+```bash
+swift test
+```
+
+CI runs the core tests on both Ubuntu and macOS.
+
+## Project layout
+
+```text
+Sources/
+  LumiCore/
+    IntentRouter.swift
+    KnowledgeIndex.swift
+    LLMClient.swift
+    LumiEngine.swift
+    MemoryStore.swift
+    Models.swift
+    PromptRegistry.swift
+    ReflectionJournal.swift
+    Resources/prompts.json
+  LumiOrigin/
+    ChatViewModel.swift
+    ContentView.swift
+    LumiOriginMain.swift
+Tests/
+  LumiCoreTests/
+.github/workflows/ci.yml
+```
+
+## What changed from the original prototype
+
+The original prototype used global singleton modules such as `Reflector` and `SelfCoder` and referenced missing types. V3 keeps the useful ideas—intent routing, memory, reflection, local AI—but turns them into explicit components with dependency injection and tests. Autonomous self-modification is deliberately not part of the runtime; code changes belong in normal version control and CI.

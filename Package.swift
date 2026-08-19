@@ -1,20 +1,27 @@
-// swift-tools-version:5.7
+// swift-tools-version: 5.9
 import PackageDescription
 
 let package = Package(
     name: "LumiOrigin",
-    platforms: [.macOS(.v12)],
-    products: [
-        .executable(name: "LumiOriginApp", targets: ["LumiOrigin"])
+    platforms: [
+        .macOS(.v13)
     ],
-    dependencies: [],
+    products: [
+        .library(name: "LumiCore", targets: ["LumiCore"]),
+        .executable(name: "LumiOrigin", targets: ["LumiOrigin"])
+    ],
     targets: [
+        .target(
+            name: "LumiCore",
+            resources: [.process("Resources")]
+        ),
         .executableTarget(
             name: "LumiOrigin",
-            path: ".",
-            exclude: [],
-            sources: ["."],
-            resources: []
+            dependencies: ["LumiCore"]
+        ),
+        .testTarget(
+            name: "LumiCoreTests",
+            dependencies: ["LumiCore"]
         )
     ]
 )
