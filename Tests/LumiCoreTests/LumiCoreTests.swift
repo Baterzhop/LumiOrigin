@@ -238,7 +238,7 @@ final class LumiCoreTests: XCTestCase {
         let store = SQLiteKnowledgeStore(databaseURL: databaseURL)
         let ingestor = DocumentIngestor(chunker: TextChunker(maxCharacters: 300, overlapCharacters: 0))
 
-        try await ingestor.ingest(
+        _ = try await ingestor.ingest(
             IngestibleDocument(
                 id: "service-note",
                 title: "Service Note",
@@ -247,9 +247,10 @@ final class LumiCoreTests: XCTestCase {
             ),
             into: store
         )
-        XCTAssertFalse(await store.search("banana", limit: 5).isEmpty)
+        let oldHitsBeforeReplacement = await store.search("banana", limit: 5)
+        XCTAssertFalse(oldHitsBeforeReplacement.isEmpty)
 
-        try await ingestor.ingest(
+        _ = try await ingestor.ingest(
             IngestibleDocument(
                 id: "service-note",
                 title: "Service Note",
@@ -259,8 +260,10 @@ final class LumiCoreTests: XCTestCase {
             into: store
         )
 
-        XCTAssertTrue(await store.search("banana", limit: 5).isEmpty)
-        XCTAssertFalse(await store.search("cylinder synchronization", limit: 5).isEmpty)
+        let oldHitsAfterReplacement = await store.search("banana", limit: 5)
+        let newHits = await store.search("cylinder synchronization", limit: 5)
+        XCTAssertTrue(oldHitsAfterReplacement.isEmpty)
+        XCTAssertFalse(newHits.isEmpty)
     }
 
     func testEngineCanRetrieveFromPersistentKnowledgeStore() async throws {
@@ -268,7 +271,7 @@ final class LumiCoreTests: XCTestCase {
             .appendingPathComponent("lumi-engine-knowledge-\(UUID().uuidString).sqlite3")
         let store = SQLiteKnowledgeStore(databaseURL: databaseURL)
         let ingestor = DocumentIngestor()
-        try await ingestor.ingest(
+        _ = try await ingestor.ingest(
             IngestibleDocument(
                 id: "manual",
                 title: "Workshop Manual",
