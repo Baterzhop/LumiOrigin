@@ -111,7 +111,8 @@ struct ContentView: View {
                     Text("No retrieved context")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(Array(model.contextHits.prefix(4).enumerated()), id: \.element.document.id) { index, hit in
+                    ForEach(Array(model.contextHits.prefix(4).indices), id: \.self) { index in
+                        let hit = model.contextHits[index]
                         VStack(alignment: .leading, spacing: 3) {
                             Text("[S\(index + 1)] \(hit.document.title)")
                                 .font(.subheadline.weight(.semibold))
