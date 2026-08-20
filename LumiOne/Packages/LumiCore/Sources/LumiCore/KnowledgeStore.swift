@@ -41,7 +41,7 @@ public actor KnowledgeIngestionEngine {
         }
 
         let existing = try await store.loadDocument(sourceResourceID: resourceID)
-        let now = Date()
+        let now = Self.persistenceDate()
         let documentID = existing?.id ?? UUID()
         let pageCount = extracted.pages.map(\.pageNumber).max() ?? 0
 
@@ -63,5 +63,14 @@ public actor KnowledgeIngestionEngine {
 
         try await store.replaceDocument(document, chunks: chunks)
         return KnowledgeIngestionResult(document: document, chunks: chunks)
+    }
+
+    /// Knowledge timestamps have an explicit millisecond persistence precision.
+    /// SQLite REAL preserves this value exactly enough for a write/reopen cycle,
+    /// so stable metadata such as `createdAt` does not change merely because the
+    /// document was loaded from durable storage before a re-ingestion.
+    private static func persistenceDate(_ date: Date = Date()) -> Date {
+        let milliseconds = (date.timeIntervalSince1970 * 1_000).rounded(.down)
+        return Date(timeIntervalSince1970: milliseconds / 1_000)
     }
 }
