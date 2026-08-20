@@ -54,4 +54,58 @@ final class LumiCoreTests: XCTestCase {
         XCTAssertEqual(request.input, "hello")
         XCTAssertNil(request.profileOverride)
     }
+
+    func testEngineStreamsAndPersistsFinalResponse() async throws {
+        let engine = LumiEngine(llm: ScriptedStreamingClient())
+        let stream = await engine.streamRespond(to: "hello", profile: "chat")
+
+        var streamed = ""
+        var finalReply: LumiReply?
+
+        for try await event in stream {
+            switch event {
+            case .token(let token):
+                streamed += token
+            case .completed(let reply):
+                finalReply = reply
+            }
+        }
+
+        XCTAssertEqual(streamed, "Hello")
+        XCTAssertEqual(finalReply?.message.content, "Hello")
+        XCTAssertEqual(finalReply?.runtime.model, "test-model")
+
+        let messages = await engine.messages()
+        XCTAssertEqual(messages.count, 2)
+        XCTAssertEqual(messages.last?.content, "Hello")
+    }
+}
+
+private struct ScriptedStreamingClient: LLMClient {
+    func complete(_ request: ModelRequest) async throws -> ModelResponse {
+        response
+    }
+
+    func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.token("Hel"))
+            continuation.yield(.token("lo"))
+            continuation.yield(.completed(response))
+            continuation.finish()
+        }
+    }
+
+    private var response: ModelResponse {
+        ModelResponse(
+            content: "Hello",
+            runtime: RuntimeMetadata(
+                provider: .ollama,
+                model: "test-model",
+                fallbackUsed: false,
+                latencyMs: 12,
+                finishReason: .stop,
+                usage: ModelUsage(inputTokens: 3, outputTokens: 1)
+            )
+        )
+    }
 }
