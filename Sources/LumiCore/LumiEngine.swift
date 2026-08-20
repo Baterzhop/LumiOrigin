@@ -5,7 +5,7 @@ public actor LumiEngine {
 
     public let memory: MemoryStore
     public let reflections: ReflectionJournal
-    public let knowledge: KnowledgeIndex
+    public let knowledge: any KnowledgeRetrieving
     public let conversationID: UUID
 
     private let router: IntentRouter
@@ -23,7 +23,7 @@ public actor LumiEngine {
         router: IntentRouter = IntentRouter(),
         memory: MemoryStore = MemoryStore(),
         reflections: ReflectionJournal = ReflectionJournal(),
-        knowledge: KnowledgeIndex = KnowledgeIndex(documents: LumiEngine.bootstrapKnowledge),
+        knowledge: any KnowledgeRetrieving = KnowledgeIndex(documents: LumiEngine.bootstrapKnowledge),
         conversationStore: any ConversationStore = InMemoryConversationStore(),
         conversationID: UUID = LumiEngine.defaultConversationID,
         contextManager: ContextBudgetManager = ContextBudgetManager()
