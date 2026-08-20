@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 
 from lumi_core import __version__
 from lumi_core.agent.generations import GenerationRegistry
+from lumi_core.agent.planner import LLMTaskPlanner
 from lumi_core.agent.runtime import AgentRuntime, ChatResponse, ChatStreamEvent
+from lumi_core.agent.task_runtime import TaskRuntime
 from lumi_core.config import Settings
 from lumi_core.models.gateway import ModelGateway, OllamaProvider
 from lumi_core.rag.embeddings import OllamaEmbeddingProvider
@@ -16,6 +18,7 @@ from lumi_core.rag.ingestion import IngestionService
 from lumi_core.rag.rerank import CrossEncoderReranker
 from lumi_core.rag.retrieval import HybridRetriever
 from lumi_core.storage.database import Database
+from lumi_core.tools import PolicyEngine, Workspace, build_default_registry
 
 
 class ChatRequest(BaseModel):
@@ -26,6 +29,14 @@ class ChatRequest(BaseModel):
 class KnowledgeQueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=20_000)
     k: int = Field(default=6, ge=1, le=20)
+
+
+class TaskCreateRequest(BaseModel):
+    goal: str = Field(min_length=1, max_length=50_000)
+    conversation_id: str | None = None
+    max_steps: int = Field(default=8, ge=1, le=20)
+    max_tool_calls: int = Field(default=6, ge=0, le=20)
+    max_seconds: int = Field(default=120, ge=5, le=600)
 
 
 settings = Settings.from_env()
@@ -53,6 +64,10 @@ retriever = HybridRetriever(
 )
 runtime = AgentRuntime(database, model_gateway, retriever=retriever)
 generations = GenerationRegistry()
+workspace = Workspace(settings.tool_workspace_root, max_read_bytes=settings.tool_max_read_bytes)
+tool_registry = build_default_registry(workspace, retriever)
+policy_engine = PolicyEngine()
+task_runtime = TaskRuntime(database, tool_registry, policy_engine, LLMTaskPlanner(model_gateway))
 
 app = FastAPI(title="Lumi Core", version=__version__)
 
@@ -79,6 +94,11 @@ async def runtime_status() -> dict:
             "dense_enabled": settings.rag_dense_enabled,
             "embedding_model": settings.embedding_model if settings.rag_dense_enabled else None,
             "reranker_model": settings.reranker_model,
+        },
+        "tools": {
+            "count": len(tool_registry.specs()),
+            "workspace": str(workspace.root),
+            "critical_enabled": False,
         },
     }
 
@@ -159,3 +179,46 @@ async def query_knowledge(request: KnowledgeQueryRequest) -> dict:
 @app.get("/v1/knowledge/documents")
 def knowledge_documents(limit: int = 100) -> dict:
     return {"documents": database.list_documents(limit)}
+
+
+@app.get("/v1/tools")
+def tools() -> dict:
+    return {"tools": [spec.model_dump() for spec in tool_registry.specs()]}
+
+
+@app.post("/v1/tasks")
+async def create_task(request: TaskCreateRequest) -> dict:
+    try:
+        return await task_runtime.create_and_run(
+            request.goal,
+            conversation_id=request.conversation_id,
+            max_steps=request.max_steps,
+            max_tool_calls=request.max_tool_calls,
+            max_seconds=request.max_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/tasks/{task_id}")
+def get_task(task_id: str) -> dict:
+    try:
+        return task_runtime.snapshot(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/v1/tool-calls/{tool_call_id}/approve")
+async def approve_tool_call(tool_call_id: str) -> dict:
+    try:
+        return await task_runtime.approve(tool_call_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/v1/tool-calls/{tool_call_id}/deny")
+async def deny_tool_call(tool_call_id: str) -> dict:
+    try:
+        return await task_runtime.deny(tool_call_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
