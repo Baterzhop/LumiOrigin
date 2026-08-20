@@ -249,8 +249,8 @@ public actor ToolRuntime {
 
     private func matches(_ value: ToolValue, type: ToolValueType) -> Bool {
         switch (value, type) {
-        case (.string, .string), (.integer, .integer), (.number, .number), (.boolean, .boolean),
-             (.array, .array), (.object, .object):
+        case (.string(_), .string), (.integer(_), .integer), (.number(_), .number), (.boolean(_), .boolean),
+             (.array(_), .array), (.object(_), .object):
             return true
         default:
             return false
