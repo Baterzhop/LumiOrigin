@@ -68,16 +68,54 @@ struct ContentView: View {
                 }
             }
 
+            Section("Verified citations") {
+                if model.citationReport.citations.isEmpty {
+                    Text(model.citationReport.availableEvidenceCount > 0 ? "Retrieved evidence was not cited" : "No citations")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.citationReport.citations) { citation in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("[\(citation.marker)] \(citation.title)")
+                                .font(.subheadline.weight(.semibold))
+
+                            if let section = citation.section {
+                                Text(section)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let page = citation.page {
+                                Text("Page \(page)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let sourceURI = citation.sourceURI {
+                                Text(sourceURI)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+
+                if !model.citationReport.invalidMarkers.isEmpty {
+                    Text("Invalid markers: \(model.citationReport.invalidMarkers.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
             Section("Retrieved context") {
                 if model.contextHits.isEmpty {
                     Text("No retrieved context")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(model.contextHits.prefix(4), id: \.document.id) { hit in
+                    ForEach(Array(model.contextHits.prefix(4).enumerated()), id: \.element.document.id) { index, hit in
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(hit.document.title)
+                            Text("[S\(index + 1)] \(hit.document.title)")
                                 .font(.subheadline.weight(.semibold))
-                            Text(hit.score.formatted(.number.precision(.fractionLength(2))))
+                            Text(hit.score.formatted(.number.precision(.fractionLength(3))))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
@@ -112,7 +150,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Lumi")
                     .font(.headline)
-                Text("Local-first · persistent · streaming · token-budgeted")
+                Text("Local-first · persistent · hybrid RAG · verified citations")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -170,7 +208,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             Text("Lumi is ready")
                 .font(.title3.weight(.semibold))
-            Text("Conversation history is stored locally. Ollama is used when available; fallback mode remains available when the model is offline.")
+            Text("Conversation history and the knowledge index are stored locally. Ollama provides generation and embeddings when available.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 500)
