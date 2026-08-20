@@ -20,6 +20,7 @@ public struct DeveloperStatusDTO: Decodable, Sendable {
     public let currentBranch: String?
     public let clean: Bool
     public let publisherConfigured: Bool
+    public let localChecksEnabled: Bool
     public let error: String?
 
     enum CodingKeys: String, CodingKey {
@@ -30,6 +31,7 @@ public struct DeveloperStatusDTO: Decodable, Sendable {
         case currentBranch = "current_branch"
         case clean
         case publisherConfigured = "publisher_configured"
+        case localChecksEnabled = "local_checks_enabled"
         case error
     }
 }
