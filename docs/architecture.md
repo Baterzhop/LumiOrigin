@@ -2,7 +2,7 @@
 
 ## Product definition
 
-Lumi is a local-first personal AI assistant. The product goal is not to simulate consciousness; it is to reliably understand a task, retrieve grounded context, use approved tools, preserve useful memory, and explain what it did.
+Lumi is a local-first personal AI assistant. The goal is not to simulate consciousness; it is to reliably understand a task, retrieve grounded context, use approved tools, preserve useful memory, and explain what it did.
 
 ## Non-negotiable design rules
 
@@ -11,10 +11,10 @@ Lumi is a local-first personal AI assistant. The product goal is not to simulate
 3. **No direct LLM-to-shell/file mutation.** Every side effect goes through a typed tool + policy decision.
 4. **Local-first, provider-neutral.** Ollama is the first provider, not a hard dependency of the architecture.
 5. **Bounded execution.** Every agent task has step, time, and tool budgets.
-6. **Grounding is measurable.** RAG must return source/chunk identifiers; AI quality is evaluated separately from unit tests.
+6. **Grounding is measurable.** RAG returns source/chunk identifiers; AI quality is evaluated separately from unit tests.
 7. **No microservices until scale requires them.** V4 begins as one Python service with internal modules.
 
-## Target flow
+## Current flow
 
 ```text
 User
@@ -22,25 +22,36 @@ User
 SwiftUI client
  ↓
 API/session layer
- ↓
-AgentRuntime
- ├─ ContextManager
- ├─ ModelGateway
- ├─ Retriever
- ├─ ToolRegistry
- ├─ PolicyEngine
- └─ EventRecorder
- ↓
-SQLite + vector/FTS indexes
+ ├─────────────── ChatRuntime ───────────────┐
+ │                                            │
+ └─ TaskRuntime                               │
+      ├─ LLMTaskPlanner                       │
+      ├─ ToolRegistry                         │
+      ├─ PolicyEngine                         │
+      ├─ budgets                              │
+      └─ approval boundary                    │
+              │                               │
+              ├─ read-only tools              │
+              └─ approved side effects        │
+                                              │
+              Retriever ← RAG ────────────────┤
+                                              │
+              ModelGateway ← Ollama ──────────┘
+                      │
+                      ▼
+          SQLite + FTS/vector state
 ```
 
 ## Domain boundaries
 
-### AgentRuntime
-Owns task lifecycle: receive → plan → act → observe → finish. It must not perform file/network side effects directly.
+### ChatRuntime
+Owns conversational generation, retrieval context, citations, streaming, and cancellation. Chat does not execute tools implicitly.
+
+### TaskRuntime
+Owns task lifecycle: receive → plan → act → observe → finish. It enforces step/time/tool budgets and persists every proposed tool call. It never bypasses PolicyEngine.
 
 ### ModelGateway
-Normalizes model providers, timeouts, metadata, fallbacks, and streaming formats.
+Normalizes model providers, timeouts, metadata, fallbacks, and streaming formats. Agent planning fails closed if the planner output is malformed.
 
 ### Storage
 Owns migrations and durable records. Higher layers never issue ad-hoc schema mutations.
@@ -49,14 +60,16 @@ Owns migrations and durable records. Higher layers never issue ad-hoc schema mut
 Owns ingestion, chunk metadata, sparse+dense retrieval, rank fusion, reranking, citations, and retrieval evaluation.
 
 ### Tools
-Each tool exposes a typed schema, risk level, timeout, and executor. Tool proposals are evaluated by PolicyEngine before execution.
+Each tool exposes a typed Pydantic argument schema, risk level, timeout, side-effect flag, and executor. Tool proposals are evaluated before execution and audited after execution.
 
 ### Memory
 Working context, conversation summaries, and durable semantic memories are separate data classes. Durable memory must be inspectable and deletable.
 
 ## Security model
 
-External documents, websites, emails, and tool output are **untrusted content**. They never become system instructions. High-risk operations require explicit approval. Shell execution is sandboxed and disabled by default.
+External documents, websites, emails, tool output, and model-generated tool arguments are **untrusted content**. They never become system instructions.
+
+The M3 workspace tools resolve every path against a dedicated configured root after symlink resolution. Absolute paths and parent traversal outside that root are rejected. Read operations are size-bounded. `workspace.write_text` is the only mutating tool in M3 and requires explicit approval of the displayed arguments. Delete and shell tools are not registered. Critical tools are disabled by policy even if a caller attempts to confirm them.
 
 ## Milestones
 
@@ -91,24 +104,30 @@ Exit gate: backend lifecycle and client transport/build tests pass. A physical l
 - Recall@k / MRR / nDCG metrics
 - deterministic CI regression corpus and thresholds
 
-Exit gate: deterministic retrieval regression must stay above repository thresholds and every retrieved answer can surface structured sources. This gate protects plumbing/regressions; it is **not** evidence that RAG quality is proven on real-world data. A larger representative benchmark is required before beta.
+Exit gate: deterministic retrieval regression stays above repository thresholds and retrieved answers can surface structured sources. A larger representative benchmark remains required before beta.
 
-### M3 — Agent tools — next
-- typed tool registry
-- read-only filesystem/search tools first
-- policy/approval UX
-- task state machine + step/time/tool budgets
-- tool audit log
+### M3 — Agent tools — functional alpha implemented
+- typed ToolRegistry + JSON argument schemas
+- sandboxed list/read/search tools
+- knowledge search tool
+- one approval-gated text-write tool
+- PolicyEngine and informed approval UX
+- durable task state machine
+- step/time/tool-call budgets
+- tool timeouts, audit records, denial and error states
+- strict JSON LLM planner
+- API + Swift task/approval transport
 
-Exit gate: tool success, denial, timeout, malformed-argument, and approval paths covered by integration/security tests.
+Exit gate: success, denial, timeout, malformed-argument, sandbox-escape, approval, budget, API, Swift build and transport tests pass in CI. Local model planning still requires a physical Ollama acceptance test.
 
-### M4 — Memory
+### M4 — Memory — next
 - summarization by token budget
 - user-approved durable memories
 - semantic recall
 - memory management UI
+- deletion/export guarantees
 
-Exit gate: persistence/retrieval evals and deletion guarantees pass.
+Exit gate: persistence/retrieval evals, token-budget behavior, approval semantics, and deletion guarantees pass.
 
 ### M5 — Developer Agent
 - inspect repo
