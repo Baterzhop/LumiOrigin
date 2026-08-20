@@ -107,6 +107,7 @@ class DeveloperRuntime:
         try:
             await self.repository.create_branch(branch_name, base_branch=session.base_branch)
             self.repository.apply_changes(session.proposal.changes)
+            self.repository.assert_applied_changes(session.proposal.changes)
             actual_diff = await self.repository.diff()
             if not actual_diff.strip():
                 raise RepositoryError("developer_applied_diff_empty")
@@ -128,6 +129,7 @@ class DeveloperRuntime:
         if await self.repository.current_branch() != session.branch_name:
             raise RepositoryError("developer_wrong_branch_for_validation")
         await self._assert_only_planned_paths(session)
+        self.repository.assert_applied_changes(session.proposal.changes)
         self.store.update(session_id, status="validating", error=None)
         self.store.add_event(session_id, "validation_retry_approved", {})
         await self._run_validation(session_id)
@@ -158,6 +160,8 @@ class DeveloperRuntime:
         unexpected = sorted(set(changed) - set(planned_paths))
         if unexpected:
             raise RepositoryError("developer_unexpected_worktree_changes:" + ",".join(unexpected[:20]))
+        if not session.commit_sha:
+            self.repository.assert_applied_changes(session.proposal.changes)
 
         self.store.update(session_id, status="publishing", error=None)
         self.store.add_event(session_id, "publish_approved", {})
@@ -202,11 +206,20 @@ class DeveloperRuntime:
         validation_json = json.dumps([item.model_dump() for item in validation], ensure_ascii=False)
         failed = [item for item in validation if item.status == "failed"]
         skipped = [item for item in validation if item.status == "skipped"]
-
         unexpected = await self._unexpected_paths(session)
+
+        content_error: str | None = None
+        try:
+            self.repository.assert_applied_changes(session.proposal.changes)
+        except RepositoryError as exc:
+            content_error = str(exc)
+
         if unexpected:
             final_status = "validation_failed"
             error = "developer_validation_created_unexpected_paths:" + ",".join(unexpected[:20])
+        elif content_error:
+            final_status = "validation_failed"
+            error = content_error
         elif failed:
             final_status = "validation_failed"
             error = "developer_validation_failed"
@@ -231,6 +244,7 @@ class DeveloperRuntime:
                 "failed": [item.name for item in failed],
                 "skipped": [item.name for item in skipped],
                 "unexpected_paths": unexpected,
+                "content_error": content_error,
             },
         )
 
