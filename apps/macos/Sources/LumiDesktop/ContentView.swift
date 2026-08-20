@@ -89,6 +89,19 @@ struct ContentView: View {
                         Text("Risk: \(call.risk)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                        if let arguments = call.argumentsPreview {
+                            Text("Arguments")
+                                .font(.caption2.weight(.semibold))
+                            Text(arguments)
+                                .font(.caption2.monospaced())
+                                .textSelection(.enabled)
+                                .lineLimit(8)
+                        }
+                        if let reason = call.decisionReason {
+                            Text(reason)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                         HStack {
                             Button("Deny", role: .destructive) {
                                 model.denyPendingTool()
@@ -158,10 +171,10 @@ struct ContentView: View {
                                 .font(.system(size: 44))
                                 .foregroundStyle(.secondary)
                             Text("Lumi is ready").font(.title3.weight(.semibold))
-                            Text("Chat uses grounded local knowledge. Bounded agent tasks can use sandboxed tools; side effects are blocked until you approve them.")
+                            Text("Chat uses grounded local knowledge. Bounded agent tasks can use sandboxed tools; side effects are blocked until you approve the exact arguments.")
                                 .multilineTextAlignment(.center)
                                 .foregroundStyle(.secondary)
-                                .frame(maxWidth: 600)
+                                .frame(maxWidth: 620)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 110)
