@@ -124,6 +124,7 @@ public enum MemoryWritePolicy: String, Codable, Sendable, Hashable {
 public enum MemoryError: Error, LocalizedError, Sendable {
     case emptyContent
     case notFound
+    case unavailable
     case policyDenied
     case openFailed(String)
     case migrationFailed(String)
@@ -135,6 +136,7 @@ public enum MemoryError: Error, LocalizedError, Sendable {
         switch self {
         case .emptyContent: return "Memory content is empty."
         case .notFound: return "Memory record was not found."
+        case .unavailable: return "Long-term memory is not configured for this Lumi runtime."
         case .policyDenied: return "The current memory policy does not allow this write without explicit review."
         case .openFailed(let detail): return "Could not open the memory database: \(detail)"
         case .migrationFailed(let detail): return "Could not migrate the memory database: \(detail)"
