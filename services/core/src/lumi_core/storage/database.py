@@ -64,12 +64,15 @@ class Database:
         *,
         provider: str | None = None,
         model: str | None = None,
+        generation_id: str | None = None,
+        finish_reason: str | None = None,
+        error: str | None = None,
     ) -> str:
         message_id = str(uuid.uuid4())
         with self.connect() as connection:
             connection.execute(
-                "INSERT INTO messages(id, conversation_id, role, content, provider, model) VALUES (?, ?, ?, ?, ?, ?)",
-                (message_id, conversation_id, role, content, provider, model),
+                "INSERT INTO messages(id, conversation_id, role, content, provider, model, generation_id, finish_reason, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (message_id, conversation_id, role, content, provider, model, generation_id, finish_reason, error),
             )
             connection.execute(
                 "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -81,7 +84,7 @@ class Database:
         limit = max(1, min(limit, 200))
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT id, role, content, provider, model, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                "SELECT id, role, content, provider, model, generation_id, finish_reason, error, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
                 (conversation_id, limit),
             ).fetchall()
         return [dict(row) for row in reversed(rows)]

@@ -1,3 +1,19 @@
-from .gateway import ModelGateway, ModelMessage, ModelResult, OllamaProvider
+from .gateway import (
+    FallbackProvider,
+    GenerationCancelled,
+    ModelGateway,
+    ModelMessage,
+    ModelResult,
+    ModelStreamEvent,
+    OllamaProvider,
+)
 
-__all__ = ["ModelGateway", "ModelMessage", "ModelResult", "OllamaProvider"]
+__all__ = [
+    "FallbackProvider",
+    "GenerationCancelled",
+    "ModelGateway",
+    "ModelMessage",
+    "ModelResult",
+    "ModelStreamEvent",
+    "OllamaProvider",
+]
