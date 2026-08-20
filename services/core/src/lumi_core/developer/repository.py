@@ -243,15 +243,15 @@ class GitRepository:
         if name == "python-core-tests":
             target = self.root / "services/core/tests"
             if target.exists():
-                return [sys.executable, "-m", "pytest", "services/core/tests", "-q"], self.root
+                return [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "services/core/tests", "-q"], self.root
         if name == "rag-regression":
             target = self.root / "scripts/eval_rag.py"
             if target.exists():
-                return [sys.executable, "scripts/eval_rag.py", "--assert-thresholds"], self.root
+                return [sys.executable, "-B", "scripts/eval_rag.py", "--assert-thresholds"], self.root
         if name == "memory-regression":
             target = self.root / "scripts/eval_memory.py"
             if target.exists():
-                return [sys.executable, "scripts/eval_memory.py", "--assert-thresholds"], self.root
+                return [sys.executable, "-B", "scripts/eval_memory.py", "--assert-thresholds"], self.root
         if name == "swift-tests":
             target = self.root / "apps/macos/Package.swift"
             if target.exists():
@@ -266,9 +266,12 @@ class GitRepository:
 
     @staticmethod
     async def _run(command: list[str], *, cwd: Path, timeout: int) -> tuple[int, str]:
+        environment = dict(os.environ)
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=str(cwd),
+            env=environment,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
