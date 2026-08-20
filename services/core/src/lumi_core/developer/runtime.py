@@ -114,8 +114,16 @@ class DeveloperRuntime:
             validation = await self.repository.run_checks(session.checks)
             validation_json = json.dumps([item.model_dump() for item in validation], ensure_ascii=False)
             failed = [item for item in validation if item.status == "failed"]
-            final_status = "validation_failed" if failed else "ready_to_publish"
-            error = "developer_validation_failed" if failed else None
+            skipped = [item for item in validation if item.status == "skipped"]
+            if failed:
+                final_status = "validation_failed"
+                error = "developer_validation_failed"
+            elif skipped:
+                final_status = "validation_incomplete"
+                error = "developer_validation_incomplete"
+            else:
+                final_status = "ready_to_publish"
+                error = None
             self.store.update(
                 session_id,
                 status=final_status,
@@ -125,7 +133,11 @@ class DeveloperRuntime:
             self.store.add_event(
                 session_id,
                 "validation_finished",
-                {"status": final_status, "failed": [item.name for item in failed]},
+                {
+                    "status": final_status,
+                    "failed": [item.name for item in failed],
+                    "skipped": [item.name for item in skipped],
+                },
             )
         except Exception as exc:
             self.store.update(session_id, status="failed", error=str(exc)[:2_000])
@@ -172,7 +184,7 @@ class DeveloperRuntime:
 
             await self.repository.push(session.branch_name)
             self.store.add_event(session_id, "pushed", {"branch": session.branch_name})
-            body = self._pr_body(session)
+            body = self._pr_body(self._get(session_id))
             pr_url = await self.publisher.create_pull_request(
                 branch=session.branch_name,
                 base_branch=session.base_branch,
