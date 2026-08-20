@@ -111,38 +111,26 @@ class DeveloperRuntime:
             if not actual_diff.strip():
                 raise RepositoryError("developer_applied_diff_empty")
             self.store.update(session_id, proposed_diff=actual_diff, status="validating")
-            validation = await self.repository.run_checks(session.checks)
-            validation_json = json.dumps([item.model_dump() for item in validation], ensure_ascii=False)
-            failed = [item for item in validation if item.status == "failed"]
-            skipped = [item for item in validation if item.status == "skipped"]
-            if failed:
-                final_status = "validation_failed"
-                error = "developer_validation_failed"
-            elif skipped:
-                final_status = "validation_incomplete"
-                error = "developer_validation_incomplete"
-            else:
-                final_status = "ready_to_publish"
-                error = None
-            self.store.update(
-                session_id,
-                status=final_status,
-                validation_json=validation_json,
-                error=error,
-            )
-            self.store.add_event(
-                session_id,
-                "validation_finished",
-                {
-                    "status": final_status,
-                    "failed": [item.name for item in failed],
-                    "skipped": [item.name for item in skipped],
-                },
-            )
+            await self._run_validation(session_id)
         except Exception as exc:
             self.store.update(session_id, status="failed", error=str(exc)[:2_000])
             self.store.add_event(session_id, "apply_failed", {"error": type(exc).__name__})
             raise
+        return self._get(session_id)
+
+    async def revalidate(self, session_id: str) -> DeveloperSessionView:
+        session = self._get(session_id)
+        if session.status not in {"validation_failed", "validation_incomplete"}:
+            raise ValueError("developer_session_not_revalidatable")
+        if session.proposal is None or not session.branch_name:
+            raise ValueError("developer_session_incomplete")
+        await self.repository.verify()
+        if await self.repository.current_branch() != session.branch_name:
+            raise RepositoryError("developer_wrong_branch_for_validation")
+        self._assert_only_planned_paths(session)
+        self.store.update(session_id, status="validating", error=None)
+        self.store.add_event(session_id, "validation_retry_approved", {})
+        await self._run_validation(session_id)
         return self._get(session_id)
 
     def deny_plan(self, session_id: str) -> DeveloperSessionView:
@@ -205,6 +193,61 @@ class DeveloperRuntime:
     def events(self, session_id: str) -> list[dict]:
         self._get(session_id)
         return self.store.events(session_id)
+
+    async def _run_validation(self, session_id: str) -> None:
+        session = self._get(session_id)
+        if session.proposal is None:
+            raise ValueError("developer_session_incomplete")
+        validation = await self.repository.run_checks(session.checks)
+        validation_json = json.dumps([item.model_dump() for item in validation], ensure_ascii=False)
+        failed = [item for item in validation if item.status == "failed"]
+        skipped = [item for item in validation if item.status == "skipped"]
+
+        unexpected = await self._unexpected_paths(session)
+        if unexpected:
+            final_status = "validation_failed"
+            error = "developer_validation_created_unexpected_paths:" + ",".join(unexpected[:20])
+        elif failed:
+            final_status = "validation_failed"
+            error = "developer_validation_failed"
+        elif skipped:
+            final_status = "validation_incomplete"
+            error = "developer_validation_incomplete"
+        else:
+            final_status = "ready_to_publish"
+            error = None
+
+        self.store.update(
+            session_id,
+            status=final_status,
+            validation_json=validation_json,
+            error=error,
+        )
+        self.store.add_event(
+            session_id,
+            "validation_finished",
+            {
+                "status": final_status,
+                "failed": [item.name for item in failed],
+                "skipped": [item.name for item in skipped],
+                "unexpected_paths": unexpected,
+            },
+        )
+
+    async def _unexpected_paths(self, session: DeveloperSessionView) -> list[str]:
+        assert session.proposal is not None
+        planned = {change.path for change in session.proposal.changes}
+        changed = set(await self.repository.changed_paths())
+        return sorted(changed - planned)
+
+    def _assert_only_planned_paths(self, session: DeveloperSessionView) -> None:
+        if session.proposal is None:
+            raise ValueError("developer_session_incomplete")
+
+    async def _assert_only_planned_paths_async(self, session: DeveloperSessionView) -> None:
+        unexpected = await self._unexpected_paths(session)
+        if unexpected:
+            raise RepositoryError("developer_unexpected_worktree_changes:" + ",".join(unexpected[:20]))
 
     def _validate_proposal(self, proposal: DeveloperProposal) -> None:
         seen: set[str] = set()
