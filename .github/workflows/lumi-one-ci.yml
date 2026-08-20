@@ -6,6 +6,10 @@ on:
       - lumi-one/rebuild
   pull_request:
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   core-tests:
     name: Core tests (Linux)
@@ -17,7 +21,31 @@ jobs:
       - name: Show Swift version
         run: swift --version
       - name: Run LumiCore tests
-        run: swift test
+        working-directory: LumiOne/Packages/LumiCore
+        shell: bash
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/core-test.log"
+      - name: Report Core failure to issue #2
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          {
+            echo "### CI failure — Core tests (Linux)"
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo '```text'
+            if [ -f "$RUNNER_TEMP/core-test.log" ]; then
+              tail -n 120 "$RUNNER_TEMP/core-test.log"
+            else
+              echo "Core test command did not produce a log; inspect the workflow run above."
+            fi
+            echo '```'
+          } > "$RUNNER_TEMP/core-failure.md"
+          gh issue comment 2 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/core-failure.md"
 
   mac-app-build:
     name: LumiMac build (macOS)
@@ -28,4 +56,27 @@ jobs:
         run: swift --version
       - name: Build LumiMac
         working-directory: LumiOne/Apps/LumiMac
-        run: swift build
+        shell: bash
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee "$RUNNER_TEMP/mac-build.log"
+      - name: Report macOS build failure to issue #2
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          {
+            echo "### CI failure — LumiMac build (macOS)"
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo '```text'
+            if [ -f "$RUNNER_TEMP/mac-build.log" ]; then
+              tail -n 120 "$RUNNER_TEMP/mac-build.log"
+            else
+              echo "macOS build command did not produce a log; inspect the workflow run above."
+            fi
+            echo '```'
+          } > "$RUNNER_TEMP/mac-failure.md"
+          gh issue comment 2 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/mac-failure.md"
