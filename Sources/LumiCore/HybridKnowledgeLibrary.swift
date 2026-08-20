@@ -216,7 +216,8 @@ public actor HybridKnowledgeLibrary: KnowledgeRetrieving {
         }
 
         return scores
-            .compactMap { id, score -> KnowledgeHit? in
+            .compactMap { entry -> KnowledgeHit? in
+                let (id, score) = entry
                 guard let document = documents[id] else { return nil }
                 return KnowledgeHit(document: document, score: score)
             }
