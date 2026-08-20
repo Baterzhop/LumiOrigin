@@ -129,8 +129,11 @@ final class ToolRuntimeTests: XCTestCase {
         let grants = await permissions.activeGrants()
         XCTAssertEqual(grants.count, 1)
         XCTAssertEqual(grants.first?.duration, .session)
-        XCTAssertTrue(await permissions.authorize(request))
-        XCTAssertTrue(await permissions.authorize(request))
+
+        let firstAuthorization = await permissions.authorize(request)
+        let secondAuthorization = await permissions.authorize(request)
+        XCTAssertTrue(firstAuthorization)
+        XCTAssertTrue(secondAuthorization)
     }
 
     func testReadTextFileInputUsesSafeDefaultWhenMaxBytesIsOmitted() throws {
