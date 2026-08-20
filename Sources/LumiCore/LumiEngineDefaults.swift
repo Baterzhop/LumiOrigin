@@ -2,10 +2,11 @@ import Foundation
 
 public extension LumiEngine {
     /// Production-style local default: conversation history, long-term memory, sparse knowledge,
-    /// vectors and tool audit events share one SQLite file through separate typed stores.
-    /// ToolRuntime V1 exposes only sandboxed read-only workspace tools.
+    /// vectors, tool audit events and agent checkpoints share one SQLite file through separate typed stores.
+    /// ToolRuntime exposes only sandboxed read-only workspace tools; AgentRuntime remains explicit.
     static func persistentDefault() -> LumiEngine {
         let databaseURL = SQLiteConversationStore.defaultDatabaseURL()
+        let llm = ResilientLLMClient(primary: OllamaClient())
         let sparse = SQLiteKnowledgeStore(databaseURL: databaseURL)
         let vectors = SQLiteVectorIndex(databaseURL: databaseURL)
         let hybrid = HybridKnowledgeLibrary(
@@ -36,12 +37,19 @@ public extension LumiEngine {
             ),
             auditStore: SQLiteToolAuditStore(databaseURL: databaseURL)
         )
+        let agentRuntime = AgentRuntime(
+            planner: LLMAgentPlanner(llm: llm),
+            tools: toolRuntime,
+            store: SQLiteAgentRunStore(databaseURL: databaseURL)
+        )
 
         return LumiEngine(
+            llm: llm,
             longTermMemory: memoryRuntime,
             knowledge: hybrid,
             conversationStore: SQLiteConversationStore(databaseURL: databaseURL),
-            toolRuntime: toolRuntime
+            toolRuntime: toolRuntime,
+            agentRuntime: agentRuntime
         )
     }
 
