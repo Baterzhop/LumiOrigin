@@ -193,6 +193,100 @@ final class LumiCoreTests: XCTestCase {
         XCTAssertEqual(pack.messages.last?.id, latest.id)
         XCTAssertGreaterThan(pack.report.estimatedInputTokens, pack.report.inputBudgetTokens)
     }
+
+    func testMarkdownIngestionPersistsChunksAndFTSProvenance() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lumi-knowledge-\(UUID().uuidString).sqlite3")
+        let store = SQLiteKnowledgeStore(databaseURL: databaseURL)
+        let ingestor = DocumentIngestor(
+            chunker: TextChunker(maxCharacters: 320, overlapCharacters: 40)
+        )
+        let document = IngestibleDocument(
+            id: "ducati-manual",
+            title: "Ducati Monster Workshop Manual",
+            content: """
+            # Torque Specifications
+
+            The engine oil drain plug must be tightened to 20 Nm. Always inspect the sealing washer before installation.
+
+            # Suspension
+
+            Front fork preload and damping settings are described separately from engine service procedures.
+            """,
+            sourceType: .markdown,
+            sourceURI: "file:///manuals/ducati.md",
+            tags: ["ducati", "monster", "workshop"]
+        )
+
+        let report = try await ingestor.ingest(document, into: store)
+        XCTAssertGreaterThanOrEqual(report.chunkCount, 2)
+
+        let hits = await store.search("drain plug torque", limit: 5)
+        XCTAssertEqual(hits.first?.document.sourceID, "ducati-manual")
+        XCTAssertEqual(hits.first?.document.section, "Torque Specifications")
+        XCTAssertEqual(hits.first?.document.sourceURI, "file:///manuals/ducati.md")
+        XCTAssertTrue(hits.first?.document.text.contains("20 Nm") == true)
+
+        let reopenedStore = SQLiteKnowledgeStore(databaseURL: databaseURL)
+        let reopenedHits = await reopenedStore.search("sealing washer", limit: 5)
+        XCTAssertEqual(reopenedHits.first?.document.sourceID, "ducati-manual")
+    }
+
+    func testReingestionReplacesOldSparseIndexContent() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lumi-knowledge-replace-\(UUID().uuidString).sqlite3")
+        let store = SQLiteKnowledgeStore(databaseURL: databaseURL)
+        let ingestor = DocumentIngestor(chunker: TextChunker(maxCharacters: 300, overlapCharacters: 0))
+
+        try await ingestor.ingest(
+            IngestibleDocument(
+                id: "service-note",
+                title: "Service Note",
+                content: "Legacy banana calibration procedure.",
+                sourceType: .plainText
+            ),
+            into: store
+        )
+        XCTAssertFalse(await store.search("banana", limit: 5).isEmpty)
+
+        try await ingestor.ingest(
+            IngestibleDocument(
+                id: "service-note",
+                title: "Service Note",
+                content: "Current cylinder synchronization procedure.",
+                sourceType: .plainText
+            ),
+            into: store
+        )
+
+        XCTAssertTrue(await store.search("banana", limit: 5).isEmpty)
+        XCTAssertFalse(await store.search("cylinder synchronization", limit: 5).isEmpty)
+    }
+
+    func testEngineCanRetrieveFromPersistentKnowledgeStore() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lumi-engine-knowledge-\(UUID().uuidString).sqlite3")
+        let store = SQLiteKnowledgeStore(databaseURL: databaseURL)
+        let ingestor = DocumentIngestor()
+        try await ingestor.ingest(
+            IngestibleDocument(
+                id: "manual",
+                title: "Workshop Manual",
+                content: "The oil drain plug tightening torque is 20 Nm.",
+                tags: ["motorcycle"]
+            ),
+            into: store
+        )
+
+        let engine = LumiEngine(
+            llm: ScriptedStreamingClient(),
+            knowledge: store
+        )
+        let reply = await engine.respond(to: "Find the oil drain plug torque", profile: "knowledge")
+
+        XCTAssertEqual(reply.context.first?.document.sourceID, "manual")
+        XCTAssertTrue(reply.context.first?.document.text.contains("20 Nm") == true)
+    }
 }
 
 private struct ScriptedStreamingClient: LLMClient {
