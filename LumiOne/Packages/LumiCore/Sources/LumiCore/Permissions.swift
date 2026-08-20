@@ -85,6 +85,9 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
     public let reason: String
     public let resourceDisplayName: String?
     public let resourceLocationHint: String?
+    /// Code-owned structured details for an approval UI. These values are display
+    /// metadata only and never participate in authorization matching.
+    public let details: [String: String]
 
     public init(
         id: UUID = UUID(),
@@ -92,7 +95,8 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
         resource: ResourceScope,
         reason: String,
         resourceDisplayName: String? = nil,
-        resourceLocationHint: String? = nil
+        resourceLocationHint: String? = nil,
+        details: [String: String] = [:]
     ) {
         self.id = id
         self.capability = capability
@@ -100,6 +104,7 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
         self.reason = reason
         self.resourceDisplayName = resourceDisplayName
         self.resourceLocationHint = resourceLocationHint
+        self.details = details
     }
 }
 
