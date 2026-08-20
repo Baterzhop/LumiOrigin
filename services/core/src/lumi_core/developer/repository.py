@@ -22,10 +22,12 @@ class GitRepository:
         *,
         max_read_bytes: int = 256_000,
         command_timeout_seconds: int = 180,
+        allow_local_checks: bool = False,
     ):
         self.root = root.expanduser().resolve()
         self.max_read_bytes = max(8_192, max_read_bytes)
         self.command_timeout_seconds = max(5, min(command_timeout_seconds, 900))
+        self.allow_local_checks = allow_local_checks
 
     async def verify(self) -> None:
         if not self.root.exists() or not self.root.is_dir():
@@ -49,7 +51,7 @@ class GitRepository:
             value = raw[3:]
             if " -> " in value:
                 value = value.split(" -> ", 1)[1]
-            result.append(value.strip())
+            result.append(value.strip().strip('"'))
         return result
 
     async def tracked_files(self, limit: int = 800) -> list[str]:
@@ -133,11 +135,41 @@ class GitRepository:
             os.replace(temp, path)
 
     async def diff(self) -> str:
-        return await self._git("diff", "--no-ext-diff", "--binary", "--")
+        tracked = await self._git("diff", "--no-ext-diff", "--binary", "--")
+        untracked_output = await self._git("ls-files", "--others", "--exclude-standard")
+        chunks: list[str] = [tracked] if tracked.strip() else []
+        for relative_path in [line for line in untracked_output.splitlines() if line]:
+            path = self._resolve_existing_file(relative_path)
+            if path.stat().st_size > self.max_read_bytes:
+                raise RepositoryError("developer_file_too_large")
+            data = path.read_bytes()
+            if b"\x00" in data[:4096]:
+                raise RepositoryError("developer_binary_file_forbidden")
+            content = data.decode("utf-8", errors="strict")
+            rendered = difflib.unified_diff(
+                [],
+                content.splitlines(keepends=True),
+                fromfile="/dev/null",
+                tofile=f"b/{relative_path}",
+            )
+            chunks.append("".join(rendered))
+        return "\n".join(chunk for chunk in chunks if chunk)
 
     async def run_checks(self, checks: Iterable[str]) -> list[DeveloperCheckResult]:
+        names = list(checks)
+        if names and not self.allow_local_checks:
+            return [
+                DeveloperCheckResult(
+                    name=name,
+                    command=[],
+                    status="skipped",
+                    output="local_check_execution_disabled",
+                )
+                for name in names
+            ]
+
         results: list[DeveloperCheckResult] = []
-        for name in checks:
+        for name in names:
             command, cwd = self._check_command(name)
             if command is None:
                 results.append(DeveloperCheckResult(name=name, command=[], status="skipped", output="check_not_available"))
