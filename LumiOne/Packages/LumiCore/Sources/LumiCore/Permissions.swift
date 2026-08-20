@@ -102,6 +102,15 @@ public actor PermissionEngine {
         _ request: PermissionRequest,
         duration: GrantDuration
     ) -> PermissionGrant {
+        // Keep exactly one active grant for a capability/resource pair so
+        // authorization is deterministic even when the user changes duration.
+        let duplicates = grants.values
+            .filter { $0.capability == request.capability && $0.resource == request.resource }
+            .map(\.id)
+        for id in duplicates {
+            grants.removeValue(forKey: id)
+        }
+
         let grant = PermissionGrant(
             capability: request.capability,
             resource: request.resource,

@@ -78,7 +78,7 @@ public protocol Tool: Sendable {
     func execute(_ input: Input) async throws -> Output
 }
 
-public struct ToolCall: Identifiable, Sendable {
+public struct ToolCall: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let name: String
     public let version: String
@@ -242,6 +242,18 @@ public actor ToolRuntime {
     public init(registry: ToolRegistry, permissions: PermissionEngine) {
         self.registry = registry
         self.permissions = permissions
+    }
+
+    public func descriptors() -> [ToolDescriptor] {
+        registry.descriptors
+    }
+
+    @discardableResult
+    public func grant(
+        _ request: PermissionRequest,
+        duration: GrantDuration
+    ) async -> PermissionGrant {
+        await permissions.grant(request, duration: duration)
     }
 
     public func execute(_ call: ToolCall) async throws -> ToolExecutionOutcome {

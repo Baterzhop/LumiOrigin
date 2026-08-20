@@ -53,6 +53,9 @@ public enum RuntimePhase: String, Codable, Sendable {
     case loadingConversation
     case persistingUserMessage
     case waitingForModel
+    case executingTool
+    case awaitingPermission
+    case persistingToolResult
     case persistingAssistantMessage
     case failed
 }
@@ -65,4 +68,34 @@ public struct RuntimeResponse: Sendable {
         self.conversation = conversation
         self.assistantMessage = assistantMessage
     }
+}
+
+public struct PendingToolApproval: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let conversation: Conversation
+    public let permission: PermissionRequest
+    public let toolName: String
+    public let toolVersion: String
+    public let createdAt: Date
+
+    public init(
+        id: UUID,
+        conversation: Conversation,
+        permission: PermissionRequest,
+        toolName: String,
+        toolVersion: String,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.conversation = conversation
+        self.permission = permission
+        self.toolName = toolName
+        self.toolVersion = toolVersion
+        self.createdAt = createdAt
+    }
+}
+
+public enum RuntimeOutcome: Sendable {
+    case completed(RuntimeResponse)
+    case permissionRequired(PendingToolApproval)
 }

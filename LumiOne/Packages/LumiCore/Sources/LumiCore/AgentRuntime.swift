@@ -3,23 +3,39 @@ import Foundation
 public actor AgentRuntime {
     private let store: any ConversationStore
     private let model: any ModelProvider
+    private let toolRuntime: ToolRuntime?
+    private let maxToolSteps: Int
+
+    private var pendingExecutions: [UUID: PendingExecution] = [:]
 
     public private(set) var phase: RuntimePhase = .idle
     public private(set) var lastError: String?
 
-    public init(store: any ConversationStore, model: any ModelProvider) {
+    public init(
+        store: any ConversationStore,
+        model: any ModelProvider,
+        toolRuntime: ToolRuntime? = nil,
+        maxToolSteps: Int = 8
+    ) {
         self.store = store
         self.model = model
+        self.toolRuntime = toolRuntime
+        self.maxToolSteps = max(1, maxToolSteps)
     }
 
     public func send(
         _ text: String,
         conversationID: UUID,
         title: String = "New conversation"
-    ) async throws -> RuntimeResponse {
+    ) async throws -> RuntimeOutcome {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
             throw AgentRuntimeError.emptyInput
+        }
+
+        guard !hasPendingExecution(for: conversationID) else {
+            // Chat prose is never interpreted as approval for a pending side effect.
+            throw AgentRuntimeError.pendingPermissionExists
         }
 
         do {
@@ -37,25 +53,88 @@ public actor AgentRuntime {
             conversation.messages.append(userMessage)
             conversation.updatedAt = Date()
 
-            // Persistence happens before model execution. If the model fails, the user's
-            // input remains durable and the UI can accurately show what happened.
+            // The user's input is durable before any model or tool execution starts.
             phase = .persistingUserMessage
             try await store.saveConversation(conversation)
 
-            phase = .waitingForModel
-            let response = try await model.respond(to: ModelRequest(messages: conversation.messages))
-
-            let assistantMessage = ChatMessage(role: .assistant, content: response.content)
-            conversation.messages.append(assistantMessage)
-            conversation.updatedAt = Date()
-
-            phase = .persistingAssistantMessage
-            try await store.saveConversation(conversation)
-
-            phase = .idle
-            return RuntimeResponse(
+            return try await continueRun(
                 conversation: conversation,
-                assistantMessage: assistantMessage
+                conversationID: conversationID,
+                completedToolSteps: 0
+            )
+        } catch {
+            phase = .failed
+            lastError = String(describing: error)
+            throw error
+        }
+    }
+
+    public func approvePermission(
+        pendingID: UUID,
+        duration: GrantDuration
+    ) async throws -> RuntimeOutcome {
+        guard let pending = pendingExecutions.removeValue(forKey: pendingID) else {
+            throw AgentRuntimeError.pendingPermissionNotFound
+        }
+        guard let toolRuntime else {
+            throw AgentRuntimeError.toolsUnavailable
+        }
+
+        do {
+            lastError = nil
+            _ = await toolRuntime.grant(pending.approval.permission, duration: duration)
+
+            phase = .executingTool
+            let outcome = try await toolRuntime.execute(pending.call)
+
+            switch outcome {
+            case .permissionRequired(let changedRequest):
+                // The resource may have changed between approval and execution
+                // (for example a symlink target). Never reuse approval silently.
+                return suspendForPermission(
+                    conversation: pending.conversation,
+                    conversationID: pending.conversationID,
+                    call: pending.call,
+                    request: changedRequest,
+                    completedToolSteps: pending.completedToolSteps
+                )
+
+            case .success(let success):
+                let conversation = try await persistToolSuccess(
+                    success,
+                    call: pending.call,
+                    in: pending.conversation
+                )
+                return try await continueRun(
+                    conversation: conversation,
+                    conversationID: pending.conversationID,
+                    completedToolSteps: pending.completedToolSteps + 1
+                )
+            }
+        } catch {
+            phase = .failed
+            lastError = String(describing: error)
+            throw error
+        }
+    }
+
+    public func denyPermission(pendingID: UUID) async throws -> RuntimeOutcome {
+        guard let pending = pendingExecutions.removeValue(forKey: pendingID) else {
+            throw AgentRuntimeError.pendingPermissionNotFound
+        }
+
+        do {
+            lastError = nil
+            let conversation = try await persistToolDenial(
+                call: pending.call,
+                request: pending.approval.permission,
+                in: pending.conversation
+            )
+
+            return try await continueRun(
+                conversation: conversation,
+                conversationID: pending.conversationID,
+                completedToolSteps: pending.completedToolSteps + 1
             )
         } catch {
             phase = .failed
@@ -67,9 +146,169 @@ public actor AgentRuntime {
     public func loadConversation(id: UUID) async throws -> Conversation? {
         phase = .loadingConversation
         defer {
-            if phase != .failed { phase = .idle }
+            phase = hasPendingExecution(for: id) ? .awaitingPermission : .idle
         }
         return try await store.loadConversation(id: id)
+    }
+
+    private func continueRun(
+        conversation: Conversation,
+        conversationID: UUID,
+        completedToolSteps: Int
+    ) async throws -> RuntimeOutcome {
+        phase = .waitingForModel
+
+        let tools: [ToolDescriptor]
+        if let toolRuntime {
+            tools = await toolRuntime.descriptors()
+        } else {
+            tools = []
+        }
+
+        let turn = try await model.respond(
+            to: ModelRequest(
+                messages: conversation.messages,
+                availableTools: tools
+            )
+        )
+
+        switch turn {
+        case .final(let content):
+            let normalized = content.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            guard !normalized.isEmpty else {
+                throw AgentRuntimeError.emptyFinalResponse
+            }
+
+            var updated = conversation
+            let assistantMessage = ChatMessage(role: .assistant, content: normalized)
+            updated.messages.append(assistantMessage)
+            updated.updatedAt = Date()
+
+            phase = .persistingAssistantMessage
+            try await store.saveConversation(updated)
+            phase = .idle
+
+            return .completed(
+                RuntimeResponse(
+                    conversation: updated,
+                    assistantMessage: assistantMessage
+                )
+            )
+
+        case .toolCall(let call):
+            guard completedToolSteps < maxToolSteps else {
+                throw AgentRuntimeError.toolStepLimitExceeded(maxToolSteps)
+            }
+            guard let toolRuntime else {
+                throw AgentRuntimeError.toolsUnavailable
+            }
+
+            phase = .executingTool
+            let outcome = try await toolRuntime.execute(call)
+            switch outcome {
+            case .permissionRequired(let request):
+                return suspendForPermission(
+                    conversation: conversation,
+                    conversationID: conversationID,
+                    call: call,
+                    request: request,
+                    completedToolSteps: completedToolSteps
+                )
+
+            case .success(let success):
+                let updated = try await persistToolSuccess(
+                    success,
+                    call: call,
+                    in: conversation
+                )
+                return try await continueRun(
+                    conversation: updated,
+                    conversationID: conversationID,
+                    completedToolSteps: completedToolSteps + 1
+                )
+            }
+        }
+    }
+
+    private func suspendForPermission(
+        conversation: Conversation,
+        conversationID: UUID,
+        call: ToolCall,
+        request: PermissionRequest,
+        completedToolSteps: Int
+    ) -> RuntimeOutcome {
+        let pendingID = UUID()
+        let approval = PendingToolApproval(
+            id: pendingID,
+            conversation: conversation,
+            permission: request,
+            toolName: call.name,
+            toolVersion: call.version
+        )
+
+        pendingExecutions[pendingID] = PendingExecution(
+            approval: approval,
+            conversationID: conversationID,
+            conversation: conversation,
+            call: call,
+            completedToolSteps: completedToolSteps
+        )
+        phase = .awaitingPermission
+        return .permissionRequired(approval)
+    }
+
+    private func persistToolSuccess(
+        _ success: ToolExecutionSuccess,
+        call: ToolCall,
+        in conversation: Conversation
+    ) async throws -> Conversation {
+        let payload = ToolEventPayload(
+            status: .success,
+            callID: call.id,
+            tool: success.descriptor.name,
+            version: success.descriptor.version,
+            data: success.data,
+            detail: nil
+        )
+        return try await appendToolPayload(payload, to: conversation)
+    }
+
+    private func persistToolDenial(
+        call: ToolCall,
+        request: PermissionRequest,
+        in conversation: Conversation
+    ) async throws -> Conversation {
+        let payload = ToolEventPayload(
+            status: .denied,
+            callID: call.id,
+            tool: call.name,
+            version: call.version,
+            data: nil,
+            detail: "User denied \(request.capability.rawValue) for \(request.resource.identifier)."
+        )
+        return try await appendToolPayload(payload, to: conversation)
+    }
+
+    private func appendToolPayload(
+        _ payload: ToolEventPayload,
+        to conversation: Conversation
+    ) async throws -> Conversation {
+        let data = try JSONEncoder().encode(payload)
+        guard let content = String(data: data, encoding: .utf8) else {
+            throw AgentRuntimeError.toolEventEncodingFailed
+        }
+
+        var updated = conversation
+        updated.messages.append(ChatMessage(role: .tool, content: content))
+        updated.updatedAt = Date()
+
+        phase = .persistingToolResult
+        try await store.saveConversation(updated)
+        return updated
+    }
+
+    private func hasPendingExecution(for conversationID: UUID) -> Bool {
+        pendingExecutions.values.contains { $0.conversationID == conversationID }
     }
 
     private static func makeTitle(from text: String) -> String {
@@ -79,13 +318,53 @@ public actor AgentRuntime {
     }
 }
 
+private struct PendingExecution: Sendable {
+    let approval: PendingToolApproval
+    let conversationID: UUID
+    let conversation: Conversation
+    let call: ToolCall
+    let completedToolSteps: Int
+}
+
+private struct ToolEventPayload: Codable, Sendable {
+    enum Status: String, Codable, Sendable {
+        case success
+        case denied
+    }
+
+    let status: Status
+    let callID: UUID
+    let tool: String
+    let version: String
+    let data: JSONValue?
+    let detail: String?
+}
+
 public enum AgentRuntimeError: Error, CustomStringConvertible, Sendable {
     case emptyInput
+    case emptyFinalResponse
+    case pendingPermissionExists
+    case pendingPermissionNotFound
+    case toolsUnavailable
+    case toolStepLimitExceeded(Int)
+    case toolEventEncodingFailed
 
     public var description: String {
         switch self {
         case .emptyInput:
             return "Message cannot be empty."
+        case .emptyFinalResponse:
+            return "Model returned an empty final response."
+        case .pendingPermissionExists:
+            return "This conversation is waiting for an explicit permission decision."
+        case .pendingPermissionNotFound:
+            return "The pending permission request no longer exists."
+        case .toolsUnavailable:
+            return "The model requested a tool, but ToolRuntime is unavailable."
+        case .toolStepLimitExceeded(let limit):
+            return "Tool step limit exceeded (\(limit))."
+        case .toolEventEncodingFailed:
+            return "Tool event could not be encoded for durable conversation history."
         }
     }
 }

@@ -115,6 +115,35 @@ final class ToolRuntimeTests: XCTestCase {
         XCTAssertNotEqual(firstRequest.resource, secondRequest.resource)
     }
 
+    func testReplacingSameScopeGrantIsDeterministic() async {
+        let permissions = PermissionEngine()
+        let request = PermissionRequest(
+            capability: .readUserFile,
+            resource: .file("/tmp/example.txt"),
+            reason: "test"
+        )
+
+        _ = await permissions.grant(request, duration: .once)
+        _ = await permissions.grant(request, duration: .session)
+
+        let grants = await permissions.activeGrants()
+        XCTAssertEqual(grants.count, 1)
+        XCTAssertEqual(grants.first?.duration, .session)
+
+        let firstAuthorization = await permissions.authorize(request)
+        let secondAuthorization = await permissions.authorize(request)
+        XCTAssertTrue(firstAuthorization)
+        XCTAssertTrue(secondAuthorization)
+    }
+
+    func testReadTextFileInputUsesSafeDefaultWhenMaxBytesIsOmitted() throws {
+        let json = Data(#"{"path":"/tmp/example.txt"}"#.utf8)
+        let decoded = try JSONDecoder().decode(ReadTextFileInput.self, from: json)
+
+        XCTAssertEqual(decoded.path, "/tmp/example.txt")
+        XCTAssertEqual(decoded.maxBytes, ReadTextFileInput.defaultMaxBytes)
+    }
+
     func testUnknownToolNeverExecutes() async throws {
         let permissions = PermissionEngine()
         let runtime = try makeRuntime(permissions: permissions)

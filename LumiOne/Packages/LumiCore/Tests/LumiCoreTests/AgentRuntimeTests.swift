@@ -14,8 +14,11 @@ final class AgentRuntimeTests: XCTestCase {
         do {
             let store = try SQLiteConversationStore(url: databaseURL)
             let runtime = AgentRuntime(store: store, model: TestModelProvider())
-            let response = try await runtime.send("Remember this message", conversationID: conversationID)
+            let outcome = try await runtime.send("Remember this message", conversationID: conversationID)
 
+            guard case .completed(let response) = outcome else {
+                return XCTFail("Text-only model should complete without permission")
+            }
             XCTAssertEqual(response.conversation.messages.count, 2)
             XCTAssertEqual(response.assistantMessage.content, "ACK: Remember this message")
         }
@@ -90,14 +93,14 @@ final class AgentRuntimeTests: XCTestCase {
 }
 
 private struct TestModelProvider: ModelProvider {
-    func respond(to request: ModelRequest) async throws -> ModelResponse {
+    func respond(to request: ModelRequest) async throws -> ModelTurn {
         let lastUser = request.messages.last(where: { $0.role == .user })?.content ?? ""
-        return ModelResponse(content: "ACK: \(lastUser)")
+        return .final("ACK: \(lastUser)")
     }
 }
 
 private struct FailingModelProvider: ModelProvider {
-    func respond(to request: ModelRequest) async throws -> ModelResponse {
+    func respond(to request: ModelRequest) async throws -> ModelTurn {
         throw ExpectedFailure.modelUnavailable
     }
 }
