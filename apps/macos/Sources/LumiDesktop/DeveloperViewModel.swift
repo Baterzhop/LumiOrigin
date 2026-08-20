@@ -20,7 +20,13 @@ final class DeveloperViewModel: ObservableObject {
         do {
             status = try await api.developerStatus()
             if status?.enabled == true {
-                statusText = status?.repositoryOK == true ? "Developer Agent ready" : "Repository unavailable"
+                if status?.repositoryOK == true {
+                    statusText = status?.localChecksEnabled == true
+                        ? "Developer Agent ready · local validation enabled"
+                        : "Developer Agent ready · local validation disabled by default"
+                } else {
+                    statusText = "Repository unavailable"
+                }
             } else {
                 statusText = status?.error ?? "Developer Agent disabled"
             }
@@ -102,9 +108,11 @@ final class DeveloperViewModel: ObservableObject {
         case "awaiting_plan_approval":
             return "Review the exact proposal and diff before approving."
         case "ready_to_publish":
-            return "Checks passed. Review the diff again before publishing the draft PR."
+            return "All required checks passed. Review the diff again before publishing the draft PR."
         case "validation_failed":
             return "Validation failed. Nothing was pushed or published."
+        case "validation_incomplete":
+            return "Validation is incomplete. Publishing is blocked until required local checks are explicitly enabled and rerun."
         case "published":
             return "Draft pull request created. Lumi did not merge it."
         case "denied":
