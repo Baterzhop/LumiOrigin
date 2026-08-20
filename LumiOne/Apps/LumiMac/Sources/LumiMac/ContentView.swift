@@ -33,6 +33,12 @@ struct ContentView: View {
                     .foregroundStyle(model.isSafeMode ? .red : .secondary)
             }
 
+            if !model.knowledgeDocuments.isEmpty {
+                Text("Knowledge: \(model.knowledgeDocuments.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer()
 
             Button {
@@ -43,6 +49,7 @@ struct ContentView: View {
             .disabled(
                 model.isSafeMode ||
                 model.isSending ||
+                model.indexingResourceID != nil ||
                 model.pendingApproval != nil
             )
         }
@@ -61,6 +68,22 @@ struct ContentView: View {
                         Image(systemName: "doc.text")
                         Text(descriptor.displayName)
                             .lineLimit(1)
+
+                        if model.indexingResourceID == descriptor.id {
+                            ProgressView()
+                                .controlSize(.small)
+                                .help("Adding this PDF to Knowledge")
+                        } else if model.isIndexed(descriptor) {
+                            Label("Indexed", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        } else if model.canIngest(descriptor) {
+                            Button("Add to Knowledge") {
+                                model.ingestIntoKnowledge(descriptor)
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(model.isSending || model.pendingApproval != nil)
+                        }
+
                         Button {
                             model.removeFile(descriptor)
                         } label: {
@@ -69,6 +92,7 @@ struct ContentView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Remove this file from Lumi")
+                        .disabled(model.indexingResourceID != nil)
                     }
                     .font(.caption)
                     .padding(.horizontal, 9)
