@@ -28,14 +28,22 @@ final class ChatViewModel: ObservableObject {
     @Published var runtime: RuntimeMetadata?
     @Published var lastError: String?
 
+    @Published var agentGoal = ""
+    @Published var activeAgentRun: AgentRun?
+    @Published var recentAgentRuns: [AgentRun] = []
+    @Published var isAgentRunning = false
+    @Published var agentError: String?
+
     let profiles = ["auto", "chat", "knowledge", "coding", "reflection"]
     private let engine: LumiEngine
     private var sendTask: Task<Void, Never>?
+    private var agentTask: Task<Void, Never>?
 
     init(engine: LumiEngine = LumiEngine.persistentDefault()) {
         self.engine = engine
         restoreHistory()
         refreshMemories()
+        refreshAgentRuns()
     }
 
     func send() {
@@ -99,6 +107,88 @@ final class ChatViewModel: ObservableObject {
         guard isSending else { return }
         sendTask?.cancel()
         status = "Stopping"
+    }
+
+    func startAgent() {
+        let goal = agentGoal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !goal.isEmpty, !isAgentRunning else { return }
+
+        agentError = nil
+        isAgentRunning = true
+        status = "Agent running"
+        agentTask?.cancel()
+
+        agentTask = Task {
+            do {
+                let run = try await engine.startAgent(goal: goal)
+                applyAgentRun(run)
+                if run.state == .completed {
+                    agentGoal = ""
+                }
+                refreshAgentRuns()
+            } catch is CancellationError {
+                agentError = "Agent operation was cancelled."
+                status = "Agent cancelled"
+            } catch {
+                agentError = error.localizedDescription
+                status = "Agent error"
+            }
+
+            isAgentRunning = false
+            agentTask = nil
+        }
+    }
+
+    func approvePendingAgentCall() {
+        resumePendingAgentCall(approved: true)
+    }
+
+    func rejectPendingAgentCall() {
+        resumePendingAgentCall(approved: false)
+    }
+
+    func cancelActiveAgent() {
+        guard let run = activeAgentRun else { return }
+        agentTask?.cancel()
+        agentTask = Task {
+            do {
+                let cancelled = try await engine.cancelAgent(runID: run.id)
+                applyAgentRun(cancelled)
+                refreshAgentRuns()
+            } catch {
+                agentError = error.localizedDescription
+                status = "Agent error"
+            }
+            isAgentRunning = false
+            agentTask = nil
+        }
+    }
+
+    func selectAgentRun(_ run: AgentRun) {
+        activeAgentRun = run
+        agentError = run.error
+        applyAgentStatus(run.state)
+    }
+
+    func refreshAgentRuns() {
+        Task {
+            do {
+                recentAgentRuns = try await engine.recentAgentRuns(limit: 20)
+                if activeAgentRun == nil,
+                   let resumable = recentAgentRuns.first(where: { $0.state == .waitingForConfirmation }) {
+                    activeAgentRun = resumable
+                    applyAgentStatus(resumable.state)
+                }
+            } catch let error as AgentRuntimeError {
+                if case .invalidState = error {
+                    recentAgentRuns = []
+                    return
+                }
+                agentError = error.localizedDescription
+            } catch {
+                agentError = error.localizedDescription
+            }
+        }
     }
 
     func clear() {
@@ -181,6 +271,61 @@ final class ChatViewModel: ObservableObject {
             } catch {
                 lastError = error.localizedDescription
             }
+        }
+    }
+
+    private func resumePendingAgentCall(approved: Bool) {
+        guard !isAgentRunning,
+              let run = activeAgentRun,
+              run.state == .waitingForConfirmation,
+              let pending = run.pendingCall else { return }
+
+        agentError = nil
+        isAgentRunning = true
+        status = approved ? "Agent resuming" : "Agent observing rejection"
+        agentTask?.cancel()
+
+        agentTask = Task {
+            do {
+                let resumed = try await engine.resumeAgent(
+                    runID: run.id,
+                    confirmation: ToolConfirmation(callID: pending.id, approved: approved)
+                )
+                applyAgentRun(resumed)
+                refreshAgentRuns()
+            } catch is CancellationError {
+                agentError = "Agent operation was cancelled."
+                status = "Agent cancelled"
+            } catch {
+                agentError = error.localizedDescription
+                status = "Agent error"
+            }
+
+            isAgentRunning = false
+            agentTask = nil
+        }
+    }
+
+    private func applyAgentRun(_ run: AgentRun) {
+        activeAgentRun = run
+        agentError = run.error
+        applyAgentStatus(run.state)
+    }
+
+    private func applyAgentStatus(_ state: AgentRunState) {
+        switch state {
+        case .created, .planning, .executing, .observing, .replanning:
+            status = "Agent running"
+        case .waitingForConfirmation:
+            status = "Agent needs approval"
+        case .completed:
+            status = "Agent completed"
+        case .failed:
+            status = "Agent failed"
+        case .cancelled:
+            status = "Agent cancelled"
+        case .budgetExceeded:
+            status = "Agent budget exceeded"
         }
     }
 
