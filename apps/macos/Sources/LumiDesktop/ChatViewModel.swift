@@ -17,8 +17,19 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var documentCount = 0
     @Published private(set) var isImportingKnowledge = false
 
+    @Published var agentGoal = ""
+    @Published private(set) var agentTask: AgentTaskDTO?
+    @Published private(set) var agentStatus = "No agent task"
+    @Published private(set) var isRunningAgent = false
+    @Published private(set) var toolCount = 0
+    @Published private(set) var toolWorkspace = "—"
+
     private let api: LumiAPIClient
     private var streamTask: Task<Void, Never>?
+
+    var pendingToolCall: ToolCallDTO? {
+        agentTask?.toolCalls.first(where: { $0.status == "awaiting_approval" })
+    }
 
     init(api: LumiAPIClient = LumiAPIClient()) {
         self.api = api
@@ -31,6 +42,8 @@ final class ChatViewModel: ObservableObject {
             coreVersion = health.version
             modelName = runtime.model
             providerName = runtime.provider
+            toolCount = runtime.tools?.count ?? 0
+            toolWorkspace = runtime.tools?.workspace ?? "—"
             status = health.ok && runtime.ok ? "Core ready" : "Core degraded"
             await refreshKnowledge()
         } catch {
@@ -66,6 +79,58 @@ final class ChatViewModel: ObservableObject {
                 knowledgeStatus = "Import failed: \(error.localizedDescription)"
             }
             isImportingKnowledge = false
+        }
+    }
+
+    func runAgentTask() {
+        let goal = agentGoal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !goal.isEmpty, !isRunningAgent else { return }
+        isRunningAgent = true
+        agentStatus = "Planning…"
+        agentTask = nil
+        Task {
+            do {
+                let task = try await api.createTask(goal: goal, conversationID: conversationID)
+                agentTask = task
+                agentStatus = describe(task)
+                if task.status == "completed" { agentGoal = "" }
+            } catch {
+                agentStatus = "Agent error: \(error.localizedDescription)"
+            }
+            isRunningAgent = false
+        }
+    }
+
+    func approvePendingTool() {
+        guard let call = pendingToolCall, !isRunningAgent else { return }
+        isRunningAgent = true
+        agentStatus = "Executing approved tool…"
+        Task {
+            do {
+                let task = try await api.approveToolCall(call.id)
+                agentTask = task
+                agentStatus = describe(task)
+                if task.status == "completed" { agentGoal = "" }
+            } catch {
+                agentStatus = "Approval failed: \(error.localizedDescription)"
+            }
+            isRunningAgent = false
+        }
+    }
+
+    func denyPendingTool() {
+        guard let call = pendingToolCall, !isRunningAgent else { return }
+        isRunningAgent = true
+        agentStatus = "Denying tool…"
+        Task {
+            do {
+                let task = try await api.denyToolCall(call.id)
+                agentTask = task
+                agentStatus = describe(task)
+            } catch {
+                agentStatus = "Denial failed: \(error.localizedDescription)"
+            }
+            isRunningAgent = false
         }
     }
 
@@ -125,6 +190,26 @@ final class ChatViewModel: ObservableObject {
         generationID = nil
         messages.removeAll()
         status = "Core ready"
+    }
+
+    private func describe(_ task: AgentTaskDTO) -> String {
+        switch task.status {
+        case "awaiting_approval":
+            if let call = task.toolCalls.first(where: { $0.status == "awaiting_approval" }) {
+                return "Approval required: \(call.toolName) [\(call.risk)]"
+            }
+            return "Approval required"
+        case "completed":
+            return task.resultText.map { "Completed: \($0)" } ?? "Task completed"
+        case "budget_exceeded":
+            return "Budget exceeded: \(task.error ?? "limit reached")"
+        case "failed":
+            return "Task failed: \(task.error ?? "unknown error")"
+        case "denied":
+            return "Task denied: \(task.error ?? "policy")"
+        default:
+            return task.status.replacingOccurrences(of: "_", with: " ").capitalized
+        }
     }
 
     private func consume(_ event: ChatStreamEvent, assistantID: UUID) {
