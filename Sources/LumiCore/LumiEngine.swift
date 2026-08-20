@@ -12,6 +12,7 @@ public actor LumiEngine {
     private let prompts: PromptRegistry
     private let llm: any LLMClient
     private let conversationStore: any ConversationStore
+    private let contextManager: ContextBudgetManager
 
     private var hasRestoredConversation = false
     private var storageIssue: String?
@@ -24,7 +25,8 @@ public actor LumiEngine {
         reflections: ReflectionJournal = ReflectionJournal(),
         knowledge: KnowledgeIndex = KnowledgeIndex(documents: LumiEngine.bootstrapKnowledge),
         conversationStore: any ConversationStore = InMemoryConversationStore(),
-        conversationID: UUID = LumiEngine.defaultConversationID
+        conversationID: UUID = LumiEngine.defaultConversationID,
+        contextManager: ContextBudgetManager = ContextBudgetManager()
     ) {
         self.llm = llm
         self.prompts = prompts
@@ -34,6 +36,7 @@ public actor LumiEngine {
         self.knowledge = knowledge
         self.conversationStore = conversationStore
         self.conversationID = conversationID
+        self.contextManager = contextManager
     }
 
     public func respond(to input: String, profile requestedProfile: String? = nil) async -> LumiReply {
@@ -49,18 +52,22 @@ public actor LumiEngine {
         let prepared = await prepare(request)
 
         let completion: ModelResponse
-        do {
-            completion = try await llm.complete(prepared.modelRequest)
-        } catch {
-            completion = ModelResponse(
-                content: "I couldn't reach the configured language model: \(error.localizedDescription)",
-                runtime: RuntimeMetadata(
-                    provider: .unknown,
-                    model: "unavailable",
-                    fallbackUsed: false,
-                    finishReason: .error
+        if !prepared.contextBudget.fits {
+            completion = contextOverflowResponse(prepared.contextBudget)
+        } else {
+            do {
+                completion = try await llm.complete(prepared.modelRequest)
+            } catch {
+                completion = ModelResponse(
+                    content: "I couldn't reach the configured language model: \(error.localizedDescription)",
+                    runtime: RuntimeMetadata(
+                        provider: .unknown,
+                        model: "unavailable",
+                        fallbackUsed: false,
+                        finishReason: .error
+                    )
                 )
-            )
+            }
         }
 
         return await finalize(
@@ -68,7 +75,8 @@ public actor LumiEngine {
             input: prepared.cleanInput,
             intent: prepared.intent,
             context: prepared.context,
-            profile: prepared.profile
+            profile: prepared.profile,
+            contextBudget: prepared.contextBudget
         )
     }
 
@@ -86,6 +94,22 @@ public actor LumiEngine {
 
     public func streamRespond(_ request: LumiRequest) async -> AsyncThrowingStream<LumiStreamEvent, Error> {
         let prepared = await prepare(request)
+
+        if !prepared.contextBudget.fits {
+            let reply = await finalize(
+                completion: contextOverflowResponse(prepared.contextBudget),
+                input: prepared.cleanInput,
+                intent: prepared.intent,
+                context: prepared.context,
+                profile: prepared.profile,
+                contextBudget: prepared.contextBudget
+            )
+            return AsyncThrowingStream { continuation in
+                continuation.yield(.completed(reply))
+                continuation.finish()
+            }
+        }
+
         let modelStream = llm.stream(prepared.modelRequest)
 
         return AsyncThrowingStream { continuation in
@@ -104,7 +128,8 @@ public actor LumiEngine {
                                 input: prepared.cleanInput,
                                 intent: prepared.intent,
                                 context: prepared.context,
-                                profile: prepared.profile
+                                profile: prepared.profile,
+                                contextBudget: prepared.contextBudget
                             )
                             continuation.yield(.completed(reply))
                             continuation.finish()
@@ -180,6 +205,7 @@ public actor LumiEngine {
         let context: [KnowledgeHit]
         let profile: PromptProfile
         let modelRequest: ModelRequest
+        let contextBudget: ContextBudgetReport
     }
 
     private func prepare(_ request: LumiRequest) async -> PreparedRequest {
@@ -191,20 +217,28 @@ public actor LumiEngine {
         let profile = prompts.profile(named: selectedProfileName)
 
         _ = await appendMessage(role: .user, content: cleanInput)
-        let context = await knowledge.search(cleanInput, limit: 4)
-        let history = await memory.recent(limit: 18)
-        let systemPrompt = composeSystemPrompt(profile: profile, context: context)
+
+        // Retrieval returns more candidates than the final prompt needs. ContextBudgetManager
+        // decides how many actually fit alongside system instructions and conversation history.
+        let contextCandidates = await knowledge.search(cleanInput, limit: 8)
+        let fullHistory = await memory.all()
+        let packed = contextManager.pack(
+            profile: profile,
+            history: fullHistory,
+            knowledge: contextCandidates
+        )
 
         return PreparedRequest(
             cleanInput: cleanInput,
             intent: intent,
-            context: context,
+            context: packed.knowledge,
             profile: profile,
             modelRequest: ModelRequest(
-                messages: history,
-                systemPrompt: systemPrompt,
+                messages: packed.messages,
+                systemPrompt: packed.systemPrompt,
                 profile: profile
-            )
+            ),
+            contextBudget: packed.report
         )
     }
 
@@ -213,7 +247,8 @@ public actor LumiEngine {
         input: String,
         intent: LumiIntent,
         context: [KnowledgeHit],
-        profile: PromptProfile
+        profile: PromptProfile,
+        contextBudget: ContextBudgetReport
     ) async -> LumiReply {
         let assistant = await appendMessage(role: .assistant, content: completion.content)
         await reflections.record(input: input, intent: intent, response: completion.content)
@@ -223,7 +258,20 @@ public actor LumiEngine {
             intent: intent,
             context: context,
             profile: profile.name,
-            runtime: completion.runtime
+            runtime: completion.runtime,
+            contextBudget: contextBudget
+        )
+    }
+
+    private func contextOverflowResponse(_ report: ContextBudgetReport) -> ModelResponse {
+        ModelResponse(
+            content: "The request is too large for the configured model context window (estimated \(report.estimatedInputTokens) input tokens; budget \(report.inputBudgetTokens)). Reduce the request size or configure a larger LUMI_CONTEXT_WINDOW.",
+            runtime: RuntimeMetadata(
+                provider: .unknown,
+                model: "context-budget",
+                fallbackUsed: false,
+                finishReason: .error
+            )
         )
     }
 
@@ -258,26 +306,12 @@ public actor LumiEngine {
         }
     }
 
-    private func composeSystemPrompt(profile: PromptProfile, context: [KnowledgeHit]) -> String {
-        guard !context.isEmpty else { return profile.system }
-        let rendered = context.enumerated().map { index, hit in
-            "[\(index + 1)] \(hit.document.title)\n\(hit.document.text)"
-        }.joined(separator: "\n\n")
-
-        return """
-        \(profile.system)
-
-        Relevant local context follows. Use it when it helps, but do not claim it is authoritative if it is incomplete.
-        \(rendered)
-        """
-    }
-
     public static let bootstrapKnowledge: [KnowledgeDocument] = [
         KnowledgeDocument(
             id: "lumi-architecture",
-            title: "Lumi V3 architecture",
-            text: "Lumi V3 separates orchestration, memory, intent routing, prompt profiles, knowledge retrieval, model access, reflection logging, and the SwiftUI presentation layer. Reflection is telemetry, not consciousness.",
-            tags: ["lumi", "architecture", "v3"]
+            title: "Lumi V4 architecture",
+            text: "Lumi V4 separates orchestration, durable conversation persistence, bounded working memory, token-budgeted context packing, retrieval, model access, and the SwiftUI presentation layer. Reflection is telemetry, not consciousness.",
+            tags: ["lumi", "architecture", "v4"]
         ),
         KnowledgeDocument(
             id: "lumi-model",
@@ -288,7 +322,7 @@ public actor LumiEngine {
         KnowledgeDocument(
             id: "lumi-memory",
             title: "Conversation memory",
-            text: "Conversation memory uses a bounded working buffer and can be backed by durable conversation storage. Long-term semantic memory remains a separate future layer.",
+            text: "Conversation memory uses a bounded working buffer backed by durable conversation storage. Long-term semantic memory remains a separate future layer.",
             tags: ["memory", "privacy"]
         )
     ]
