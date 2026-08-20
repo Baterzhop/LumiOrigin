@@ -48,16 +48,17 @@ struct ContentView: View {
 
             Section("Context budget") {
                 if let budget = model.contextBudget {
-                    LabeledContent(
-                        "Input",
-                        value: "\(budget.estimatedInputTokens) / \(budget.inputBudgetTokens) tok"
-                    )
+                    LabeledContent("Input", value: "\(budget.estimatedInputTokens) / \(budget.inputBudgetTokens) tok")
                     LabeledContent("System", value: "\(budget.systemTokens) tok")
                     LabeledContent("History", value: "\(budget.historyTokens) tok")
+                    LabeledContent("Memory", value: "\(budget.memoryTokens) tok")
                     LabeledContent("Knowledge", value: "\(budget.knowledgeTokens) tok")
 
                     if budget.droppedMessageCount > 0 {
                         LabeledContent("History dropped", value: "\(budget.droppedMessageCount)")
+                    }
+                    if budget.droppedMemoryCount > 0 {
+                        LabeledContent("Memory dropped", value: "\(budget.droppedMemoryCount)")
                     }
                     if budget.droppedKnowledgeCount > 0 {
                         LabeledContent("Context dropped", value: "\(budget.droppedKnowledgeCount)")
@@ -65,6 +66,80 @@ struct ContentView: View {
                 } else {
                     Text("No request packed yet")
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Long-term memory") {
+                TextField("Memory to keep…", text: $model.memoryDraft, axis: .vertical)
+                    .lineLimit(1...3)
+
+                HStack {
+                    Button(model.editingMemoryID == nil ? "Remember" : "Save") {
+                        model.saveMemoryDraft()
+                    }
+                    .disabled(model.memoryDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    if model.editingMemoryID != nil {
+                        Button("Cancel") { model.cancelMemoryEdit() }
+                    }
+                }
+
+                if model.storedMemories.isEmpty {
+                    Text("No stored memories")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.storedMemories.prefix(6)) { memory in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(memory.kind.rawValue.capitalized)
+                                    .font(.caption.weight(.semibold))
+                                Spacer()
+                                if memory.isPinned {
+                                    Image(systemName: "pin.fill")
+                                        .font(.caption)
+                                }
+                            }
+                            Text(memory.content)
+                                .font(.caption)
+                                .lineLimit(3)
+                                .textSelection(.enabled)
+                            HStack {
+                                Button {
+                                    model.beginEditingMemory(memory)
+                                } label: {
+                                    Image(systemName: "pencil")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Edit memory")
+
+                                Button(role: .destructive) {
+                                    model.forgetMemory(memory)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Forget memory")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !model.relevantMemories.isEmpty {
+                Section("Memory used this turn") {
+                    ForEach(Array(model.relevantMemories.prefix(4).indices), id: \.self) { index in
+                        let hit = model.relevantMemories[index]
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("[M\(index + 1)] \(hit.record.kind.rawValue.capitalized)")
+                                .font(.subheadline.weight(.semibold))
+                            Text(hit.record.content)
+                                .font(.caption)
+                                .lineLimit(2)
+                            Text(hit.score.formatted(.number.precision(.fractionLength(3))))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
 
@@ -77,16 +152,11 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("[\(citation.marker)] \(citation.title)")
                                 .font(.subheadline.weight(.semibold))
-
                             if let section = citation.section {
-                                Text(section)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                Text(section).font(.caption).foregroundStyle(.secondary)
                             }
                             if let page = citation.page {
-                                Text("Page \(page)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                Text("Page \(page)").font(.caption).foregroundStyle(.secondary)
                             }
                             if let sourceURI = citation.sourceURI {
                                 Text(sourceURI)
@@ -151,14 +221,13 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Lumi")
                     .font(.headline)
-                Text("Local-first · persistent · hybrid RAG · verified citations")
+                Text("Local-first · persistent memory · hybrid RAG · verified citations")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             if model.isSending {
-                ProgressView()
-                    .controlSize(.small)
+                ProgressView().controlSize(.small)
             }
         }
         .padding(.horizontal, 18)
@@ -172,25 +241,17 @@ struct ContentView: View {
                     if model.messages.isEmpty && model.streamingText.isEmpty {
                         emptyState
                     }
-
                     ForEach(model.messages) { message in
-                        MessageBubble(message: message)
-                            .id(message.id)
+                        MessageBubble(message: message).id(message.id)
                     }
-
                     if !model.streamingText.isEmpty {
-                        StreamingMessageBubble(text: model.streamingText)
-                            .id("streaming-response")
+                        StreamingMessageBubble(text: model.streamingText).id("streaming-response")
                     }
                 }
                 .padding(18)
             }
-            .onChange(of: model.messages.count) { _ in
-                scrollToBottom(proxy)
-            }
-            .onChange(of: model.streamingText) { _ in
-                scrollToBottom(proxy)
-            }
+            .onChange(of: model.messages.count) { _ in scrollToBottom(proxy) }
+            .onChange(of: model.streamingText) { _ in scrollToBottom(proxy) }
         }
     }
 
@@ -209,7 +270,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             Text("Lumi is ready")
                 .font(.title3.weight(.semibold))
-            Text("Conversation history and the knowledge index are stored locally. Ollama provides generation and embeddings when available.")
+            Text("Conversation history, user-controlled memory and the knowledge index are stored locally. Ollama provides generation and embeddings when available.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 500)
@@ -230,15 +291,13 @@ struct ContentView: View {
 
             if model.isSending {
                 Button(action: model.stop) {
-                    Image(systemName: "stop.circle.fill")
-                        .font(.system(size: 30))
+                    Image(systemName: "stop.circle.fill").font(.system(size: 30))
                 }
                 .buttonStyle(.plain)
                 .help("Stop generation")
             } else {
                 Button(action: model.send) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 30))
+                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 30))
                 }
                 .buttonStyle(.plain)
                 .disabled(model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -258,8 +317,7 @@ private struct MessageBubble: View {
                 Text(message.role == .user ? "You" : "Lumi")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Text(message.content)
-                    .textSelection(.enabled)
+                Text(message.content).textSelection(.enabled)
             }
             .padding(12)
             .background(
@@ -281,17 +339,12 @@ private struct StreamingMessageBubble: View {
                     Text("Lumi")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    ProgressView()
-                        .controlSize(.mini)
+                    ProgressView().controlSize(.mini)
                 }
-                Text(text)
-                    .textSelection(.enabled)
+                Text(text).textSelection(.enabled)
             }
             .padding(12)
-            .background(
-                Color.secondary.opacity(0.10),
-                in: RoundedRectangle(cornerRadius: 14)
-            )
+            .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
             Spacer(minLength: 90)
         }
     }
