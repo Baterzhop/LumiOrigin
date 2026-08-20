@@ -97,7 +97,9 @@ public enum RuntimePhase: String, Codable, Sendable {
     case idle
     case loadingConversation
     case persistingUserMessage
+    /// Retained for compatibility with Phase 6 diagnostics.
     case retrievingKnowledge
+    case retrievingContext
     case waitingForModel
     case executingTool
     case awaitingPermission
@@ -109,9 +111,9 @@ public enum RuntimePhase: String, Codable, Sendable {
 public struct RuntimeResponse: Sendable {
     public let conversation: Conversation
     public let assistantMessage: ChatMessage
-    /// Only citations validated against the exact grounded context snapshot
-    /// used for this user turn. This is ephemeral response metadata; source
-    /// Knowledge remains durable independently of chat history.
+    /// Only citations validated against the exact grounded Knowledge context
+    /// used for this user turn. User-memory context has separate provenance and
+    /// never becomes a document citation.
     public let citations: [KnowledgeCitation]
 
     public init(
