@@ -12,6 +12,7 @@ from lumi_core.agent.planner import LLMTaskPlanner
 from lumi_core.agent.runtime import AgentRuntime, ChatResponse, ChatStreamEvent
 from lumi_core.agent.task_runtime import TaskRuntime
 from lumi_core.config import Settings
+from lumi_core.memory import ConversationContextManager, MemoryService, MemoryStore
 from lumi_core.models.gateway import ModelGateway, OllamaProvider
 from lumi_core.rag.embeddings import OllamaEmbeddingProvider
 from lumi_core.rag.ingestion import IngestionService
@@ -39,6 +40,24 @@ class TaskCreateRequest(BaseModel):
     max_seconds: int = Field(default=120, ge=5, le=600)
 
 
+class MemoryCreateRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=50_000)
+    kind: str = Field(default="fact", min_length=1, max_length=64)
+    title: str | None = Field(default=None, max_length=200)
+    approved_by_user: bool = False
+
+
+class MemoryUpdateRequest(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=50_000)
+    kind: str | None = Field(default=None, min_length=1, max_length=64)
+    title: str | None = Field(default=None, max_length=200)
+
+
+class MemoryQueryRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=20_000)
+    k: int = Field(default=4, ge=1, le=20)
+
+
 settings = Settings.from_env()
 database = Database(settings.database_path)
 database.migrate()
@@ -62,7 +81,28 @@ retriever = HybridRetriever(
     embedding_model=settings.embedding_model if embedding_provider else None,
     reranker=reranker,
 )
-runtime = AgentRuntime(database, model_gateway, retriever=retriever)
+memory_store = MemoryStore(database)
+memory_service = MemoryService(
+    memory_store,
+    embedder=embedding_provider,
+    embedding_model=settings.embedding_model if embedding_provider else None,
+)
+context_manager = ConversationContextManager(
+    database,
+    memory_store,
+    model_gateway,
+    max_input_tokens=settings.context_max_input_tokens,
+    recent_token_budget=settings.context_recent_tokens,
+    summary_target_tokens=settings.context_summary_tokens,
+)
+runtime = AgentRuntime(
+    database,
+    model_gateway,
+    retriever=retriever,
+    context_manager=context_manager,
+    memory_service=memory_service,
+    memory_k=settings.memory_recall_k,
+)
 generations = GenerationRegistry()
 workspace = Workspace(settings.tool_workspace_root, max_read_bytes=settings.tool_max_read_bytes)
 tool_registry = build_default_registry(workspace, retriever)
@@ -94,6 +134,14 @@ async def runtime_status() -> dict:
             "dense_enabled": settings.rag_dense_enabled,
             "embedding_model": settings.embedding_model if settings.rag_dense_enabled else None,
             "reranker_model": settings.reranker_model,
+        },
+        "memory": {
+            "count": len(memory_service.list(limit=500)),
+            "semantic_enabled": embedding_provider is not None,
+            "embedding_model": settings.embedding_model if embedding_provider else None,
+            "recall_k": settings.memory_recall_k,
+            "context_max_input_tokens": settings.context_max_input_tokens,
+            "context_recent_tokens": settings.context_recent_tokens,
         },
         "tools": {
             "count": len(tool_registry.specs()),
@@ -148,6 +196,13 @@ def messages(conversation_id: str, limit: int = 30) -> dict:
     return {"conversation_id": conversation_id, "messages": database.list_messages(conversation_id, limit)}
 
 
+@app.get("/v1/conversations/{conversation_id}/summary")
+def conversation_summary(conversation_id: str) -> dict:
+    if not database.conversation_exists(conversation_id):
+        raise HTTPException(status_code=404, detail="conversation_not_found")
+    return {"conversation_id": conversation_id, "summary": memory_store.get_summary(conversation_id)}
+
+
 @app.post("/v1/knowledge/upload")
 async def upload_knowledge(
     file: Annotated[UploadFile, File()],
@@ -179,6 +234,57 @@ async def query_knowledge(request: KnowledgeQueryRequest) -> dict:
 @app.get("/v1/knowledge/documents")
 def knowledge_documents(limit: int = 100) -> dict:
     return {"documents": database.list_documents(limit)}
+
+
+@app.get("/v1/memories")
+def list_memories(limit: int = 100) -> dict:
+    return {"memories": memory_service.list(limit=limit)}
+
+
+@app.post("/v1/memories")
+async def create_memory(request: MemoryCreateRequest) -> dict:
+    if not request.approved_by_user:
+        raise HTTPException(status_code=400, detail="explicit_user_approval_required")
+    try:
+        memory = await memory_service.create(
+            request.content,
+            kind=request.kind,
+            title=request.title,
+            source="user",
+            metadata={"approval": "explicit_api_user_action"},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"memory": memory}
+
+
+@app.patch("/v1/memories/{memory_id}")
+async def update_memory(memory_id: str, request: MemoryUpdateRequest) -> dict:
+    try:
+        memory = await memory_service.update(
+            memory_id,
+            content=request.content,
+            kind=request.kind,
+            title=request.title,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if memory is None:
+        raise HTTPException(status_code=404, detail="memory_not_found")
+    return {"memory": memory}
+
+
+@app.delete("/v1/memories/{memory_id}")
+def delete_memory(memory_id: str) -> dict:
+    if not memory_service.delete(memory_id):
+        raise HTTPException(status_code=404, detail="memory_not_found")
+    return {"ok": True, "memory_id": memory_id, "deleted": True}
+
+
+@app.post("/v1/memories/search")
+async def search_memories(request: MemoryQueryRequest) -> dict:
+    hits = await memory_service.search(request.query, k=request.k)
+    return {"query": request.query, "hits": [hit.model_dump() for hit in hits]}
 
 
 @app.get("/v1/tools")
