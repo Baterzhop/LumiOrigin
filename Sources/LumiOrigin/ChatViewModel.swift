@@ -8,12 +8,13 @@ final class ChatViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var input = ""
     @Published var isSending = false
-    @Published var selectedProfile = "chat"
+    @Published var selectedProfile = "auto"
     @Published var lastIntent: LumiIntent = .chat
     @Published var contextHits: [KnowledgeHit] = []
     @Published var status = "Local-first"
+    @Published var runtime: RuntimeMetadata?
 
-    let profiles = ["chat", "knowledge", "coding", "reflection"]
+    let profiles = ["auto", "chat", "knowledge", "coding", "reflection"]
     private let engine: LumiEngine
 
     init(engine: LumiEngine = LumiEngine()) {
@@ -27,12 +28,28 @@ final class ChatViewModel: ObservableObject {
         isSending = true
         messages.append(ChatMessage(role: .user, content: text))
 
+        let profileOverride = selectedProfile == "auto" ? nil : selectedProfile
+
         Task {
-            let reply = await engine.respond(to: text, profile: selectedProfile)
+            let reply = await engine.respond(to: text, profile: profileOverride)
             messages = await engine.messages()
             lastIntent = reply.intent
             contextHits = reply.context
-            status = reply.message.content.hasPrefix("Local model is unavailable") ? "Fallback mode" : "Model ready"
+            runtime = reply.runtime
+
+            if reply.runtime.fallbackUsed {
+                status = "Fallback mode"
+            } else {
+                switch reply.runtime.provider {
+                case .ollama:
+                    status = "Model ready"
+                case .localFallback:
+                    status = "Fallback mode"
+                case .unknown:
+                    status = "Model error"
+                }
+            }
+
             isSending = false
         }
     }
@@ -43,6 +60,7 @@ final class ChatViewModel: ObservableObject {
             messages = []
             contextHits = []
             lastIntent = .chat
+            runtime = nil
             status = "Local-first"
         }
     }
