@@ -81,16 +81,13 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
         WHERE source_resource_id = ?1
         LIMIT 1;
         """
+        let db = connection.raw
 
-        var statement: OpaquePointer?
-        try prepare(connection.raw, sql: sql, statement: &statement)
-        defer { sqlite3_finalize(statement) }
-        bind(sourceResourceID.rawValue, to: statement, index: 1)
-
-        guard sqlite3_step(statement) == SQLITE_ROW else {
-            return nil
+        return try withStatement(db, sql: sql) { statement in
+            bind(sourceResourceID.rawValue, to: statement, index: 1)
+            guard try nextRow(statement, db: db) else { return nil }
+            return try decodeDocument(statement)
         }
-        return try decodeDocument(statement)
     }
 
     public func loadChunks(documentID: UUID) async throws -> [KnowledgeChunk] {
@@ -100,33 +97,33 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
         WHERE document_id = ?1
         ORDER BY ordinal ASC;
         """
+        let db = connection.raw
 
-        var statement: OpaquePointer?
-        try prepare(connection.raw, sql: sql, statement: &statement)
-        defer { sqlite3_finalize(statement) }
-        bind(documentID.uuidString, to: statement, index: 1)
+        return try withStatement(db, sql: sql) { statement in
+            bind(documentID.uuidString, to: statement, index: 1)
 
-        var chunks: [KnowledgeChunk] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard
-                let id = UUID(uuidString: text(statement, column: 0)),
-                let storedDocumentID = UUID(uuidString: text(statement, column: 1))
-            else {
-                throw KnowledgeStoreError.corruptData("invalid chunk UUID")
-            }
+            var chunks: [KnowledgeChunk] = []
+            while try nextRow(statement, db: db) {
+                guard
+                    let id = UUID(uuidString: text(statement, column: 0)),
+                    let storedDocumentID = UUID(uuidString: text(statement, column: 1))
+                else {
+                    throw KnowledgeStoreError.corruptData("invalid chunk UUID")
+                }
 
-            chunks.append(
-                KnowledgeChunk(
-                    id: id,
-                    documentID: storedDocumentID,
-                    ordinal: Int(sqlite3_column_int64(statement, 2)),
-                    pageStart: Int(sqlite3_column_int64(statement, 3)),
-                    pageEnd: Int(sqlite3_column_int64(statement, 4)),
-                    text: text(statement, column: 5)
+                chunks.append(
+                    KnowledgeChunk(
+                        id: id,
+                        documentID: storedDocumentID,
+                        ordinal: Int(sqlite3_column_int64(statement, 2)),
+                        pageStart: Int(sqlite3_column_int64(statement, 3)),
+                        pageEnd: Int(sqlite3_column_int64(statement, 4)),
+                        text: text(statement, column: 5)
+                    )
                 )
-            )
+            }
+            return chunks
         }
-        return chunks
     }
 
     public func listDocuments() async throws -> [KnowledgeDocument] {
@@ -136,16 +133,15 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
         FROM knowledge_documents
         ORDER BY updated_at DESC, display_name ASC;
         """
+        let db = connection.raw
 
-        var statement: OpaquePointer?
-        try prepare(connection.raw, sql: sql, statement: &statement)
-        defer { sqlite3_finalize(statement) }
-
-        var documents: [KnowledgeDocument] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            documents.append(try decodeDocument(statement))
+        return try withStatement(db, sql: sql) { statement in
+            var documents: [KnowledgeDocument] = []
+            while try nextRow(statement, db: db) {
+                documents.append(try decodeDocument(statement))
+            }
+            return documents
         }
-        return documents
     }
 
     public func replaceDocument(
@@ -158,17 +154,14 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
 
         try Self.execute(db, sql: "BEGIN IMMEDIATE TRANSACTION;")
         do {
-            // A source resource has exactly one current Knowledge document.
-            var removeOtherStatement: OpaquePointer?
-            try prepare(
+            try withStatement(
                 db,
-                sql: "DELETE FROM knowledge_documents WHERE source_resource_id = ?1 AND id <> ?2;",
-                statement: &removeOtherStatement
-            )
-            bind(document.sourceResourceID.rawValue, to: removeOtherStatement, index: 1)
-            bind(document.id.uuidString, to: removeOtherStatement, index: 2)
-            try stepDone(removeOtherStatement, db: db)
-            sqlite3_finalize(removeOtherStatement)
+                sql: "DELETE FROM knowledge_documents WHERE source_resource_id = ?1 AND id <> ?2;"
+            ) { statement in
+                bind(document.sourceResourceID.rawValue, to: statement, index: 1)
+                bind(document.id.uuidString, to: statement, index: 2)
+                try stepDone(statement, db: db)
+            }
 
             let upsertSQL = """
             INSERT INTO knowledge_documents (
@@ -184,28 +177,25 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
                 updated_at = excluded.updated_at;
             """
 
-            var documentStatement: OpaquePointer?
-            try prepare(db, sql: upsertSQL, statement: &documentStatement)
-            bind(document.id.uuidString, to: documentStatement, index: 1)
-            bind(document.sourceResourceID.rawValue, to: documentStatement, index: 2)
-            bind(document.displayName, to: documentStatement, index: 3)
-            bind(document.mediaType, to: documentStatement, index: 4)
-            sqlite3_bind_int64(documentStatement, 5, sqlite3_int64(document.pageCount))
-            bind(metadataJSON, to: documentStatement, index: 6)
-            sqlite3_bind_double(documentStatement, 7, document.createdAt.timeIntervalSince1970)
-            sqlite3_bind_double(documentStatement, 8, document.updatedAt.timeIntervalSince1970)
-            try stepDone(documentStatement, db: db)
-            sqlite3_finalize(documentStatement)
+            try withStatement(db, sql: upsertSQL) { statement in
+                bind(document.id.uuidString, to: statement, index: 1)
+                bind(document.sourceResourceID.rawValue, to: statement, index: 2)
+                bind(document.displayName, to: statement, index: 3)
+                bind(document.mediaType, to: statement, index: 4)
+                sqlite3_bind_int64(statement, 5, sqlite3_int64(document.pageCount))
+                bind(metadataJSON, to: statement, index: 6)
+                sqlite3_bind_double(statement, 7, document.createdAt.timeIntervalSince1970)
+                sqlite3_bind_double(statement, 8, document.updatedAt.timeIntervalSince1970)
+                try stepDone(statement, db: db)
+            }
 
-            var deleteChunksStatement: OpaquePointer?
-            try prepare(
+            try withStatement(
                 db,
-                sql: "DELETE FROM knowledge_chunks WHERE document_id = ?1;",
-                statement: &deleteChunksStatement
-            )
-            bind(document.id.uuidString, to: deleteChunksStatement, index: 1)
-            try stepDone(deleteChunksStatement, db: db)
-            sqlite3_finalize(deleteChunksStatement)
+                sql: "DELETE FROM knowledge_chunks WHERE document_id = ?1;"
+            ) { statement in
+                bind(document.id.uuidString, to: statement, index: 1)
+                try stepDone(statement, db: db)
+            }
 
             let chunkSQL = """
             INSERT INTO knowledge_chunks (
@@ -213,17 +203,23 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6);
             """
 
-            for chunk in chunks {
-                var statement: OpaquePointer?
-                try prepare(db, sql: chunkSQL, statement: &statement)
-                bind(chunk.id.uuidString, to: statement, index: 1)
-                bind(chunk.documentID.uuidString, to: statement, index: 2)
-                sqlite3_bind_int64(statement, 3, sqlite3_int64(chunk.ordinal))
-                sqlite3_bind_int64(statement, 4, sqlite3_int64(chunk.pageStart))
-                sqlite3_bind_int64(statement, 5, sqlite3_int64(chunk.pageEnd))
-                bind(chunk.text, to: statement, index: 6)
-                try stepDone(statement, db: db)
-                sqlite3_finalize(statement)
+            try withStatement(db, sql: chunkSQL) { statement in
+                for (index, chunk) in chunks.enumerated() {
+                    if index > 0 {
+                        guard sqlite3_reset(statement) == SQLITE_OK else {
+                            throw KnowledgeStoreError.executionFailed(errorMessage(db))
+                        }
+                        sqlite3_clear_bindings(statement)
+                    }
+
+                    bind(chunk.id.uuidString, to: statement, index: 1)
+                    bind(chunk.documentID.uuidString, to: statement, index: 2)
+                    sqlite3_bind_int64(statement, 3, sqlite3_int64(chunk.ordinal))
+                    sqlite3_bind_int64(statement, 4, sqlite3_int64(chunk.pageStart))
+                    sqlite3_bind_int64(statement, 5, sqlite3_int64(chunk.pageEnd))
+                    bind(chunk.text, to: statement, index: 6)
+                    try stepDone(statement, db: db)
+                }
             }
 
             try Self.execute(db, sql: "COMMIT;")
@@ -309,6 +305,17 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
         return string
     }
 
+    private func withStatement<T>(
+        _ db: OpaquePointer,
+        sql: String,
+        _ body: (OpaquePointer?) throws -> T
+    ) throws -> T {
+        var statement: OpaquePointer?
+        try prepare(db, sql: sql, statement: &statement)
+        defer { sqlite3_finalize(statement) }
+        return try body(statement)
+    }
+
     private func prepare(
         _ db: OpaquePointer,
         sql: String,
@@ -322,6 +329,17 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
     private func bind(_ value: String, to statement: OpaquePointer?, index: Int32) {
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         sqlite3_bind_text(statement, index, value, -1, transient)
+    }
+
+    private func nextRow(_ statement: OpaquePointer?, db: OpaquePointer) throws -> Bool {
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW:
+            return true
+        case SQLITE_DONE:
+            return false
+        default:
+            throw KnowledgeStoreError.executionFailed(errorMessage(db))
+        }
     }
 
     private func stepDone(_ statement: OpaquePointer?, db: OpaquePointer) throws {
