@@ -60,12 +60,32 @@ public struct KnowledgeDocument: Identifiable, Codable, Hashable, Sendable {
     public let title: String
     public let text: String
     public let tags: [String]
+    public let sourceID: String?
+    public let chunkID: String?
+    public let sourceURI: String?
+    public let section: String?
+    public let page: Int?
 
-    public init(id: String, title: String, text: String, tags: [String] = []) {
+    public init(
+        id: String,
+        title: String,
+        text: String,
+        tags: [String] = [],
+        sourceID: String? = nil,
+        chunkID: String? = nil,
+        sourceURI: String? = nil,
+        section: String? = nil,
+        page: Int? = nil
+    ) {
         self.id = id
         self.title = title
         self.text = text
         self.tags = tags
+        self.sourceID = sourceID
+        self.chunkID = chunkID
+        self.sourceURI = sourceURI
+        self.section = section
+        self.page = page
     }
 }
 
