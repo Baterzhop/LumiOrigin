@@ -67,6 +67,37 @@ public struct LumiAPIClient: Sendable {
         return try JSONDecoder().decode(KnowledgeUploadResponse.self, from: data)
     }
 
+    public func createTask(
+        goal: String,
+        conversationID: String?,
+        maxSteps: Int = 8,
+        maxToolCalls: Int = 6,
+        maxSeconds: Int = 120
+    ) async throws -> AgentTaskDTO {
+        let payload = TaskCreateRequestDTO(
+            goal: goal,
+            conversationID: conversationID,
+            maxSteps: maxSteps,
+            maxToolCalls: maxToolCalls,
+            maxSeconds: maxSeconds
+        )
+        return try await postJSON(endpoint("v1", "tasks"), body: payload, response: AgentTaskDTO.self)
+    }
+
+    public func task(_ taskID: String) async throws -> AgentTaskDTO {
+        let (data, response) = try await URLSession.shared.data(from: endpoint("v1", "tasks", taskID))
+        try validate(response)
+        return try JSONDecoder().decode(AgentTaskDTO.self, from: data)
+    }
+
+    public func approveToolCall(_ toolCallID: String) async throws -> AgentTaskDTO {
+        try await postEmpty(endpoint("v1", "tool-calls", toolCallID, "approve"), response: AgentTaskDTO.self)
+    }
+
+    public func denyToolCall(_ toolCallID: String) async throws -> AgentTaskDTO {
+        try await postEmpty(endpoint("v1", "tool-calls", toolCallID, "deny"), response: AgentTaskDTO.self)
+    }
+
     public func streamChat(message: String, conversationID: String?) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -118,6 +149,28 @@ public struct LumiAPIClient: Sendable {
         request.httpMethod = "POST"
         let (_, response) = try await URLSession.shared.data(for: request)
         try validate(response)
+    }
+
+    private func postJSON<Body: Encodable, Response: Decodable>(
+        _ url: URL,
+        body: Body,
+        response: Response.Type
+    ) async throws -> Response {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        let (data, urlResponse) = try await URLSession.shared.data(for: request)
+        try validate(urlResponse)
+        return try JSONDecoder().decode(Response.self, from: data)
+    }
+
+    private func postEmpty<Response: Decodable>(_ url: URL, response: Response.Type) async throws -> Response {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        let (data, urlResponse) = try await URLSession.shared.data(for: request)
+        try validate(urlResponse)
+        return try JSONDecoder().decode(Response.self, from: data)
     }
 
     private func endpoint(_ components: String...) -> URL {
