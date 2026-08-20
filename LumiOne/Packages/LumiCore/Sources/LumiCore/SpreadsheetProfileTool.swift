@@ -252,4 +252,20 @@ public struct SpreadsheetProfileTool: Tool {
             "columns": .number(Double(output.columnCount))
         ]
     }
+
+    /// Column profiles are useful during the current model turn but need not be
+    /// duplicated into durable chat history. Persist only structural aggregates.
+    public func historyOutput(
+        for input: SpreadsheetProfileInput,
+        output: SpreadsheetProfileOutput
+    ) throws -> JSONValue {
+        .object([
+            "resourceID": .string(output.resourceID.rawValue),
+            "displayName": .string(output.displayName),
+            "format": .string(output.format.rawValue),
+            "rowCount": .number(Double(output.rowCount)),
+            "columnCount": .number(Double(output.columnCount)),
+            "columnProfiles": .string("<redacted:spreadsheet-derived-profiles>")
+        ])
+    }
 }
