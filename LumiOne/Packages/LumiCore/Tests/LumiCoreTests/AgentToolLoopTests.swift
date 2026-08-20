@@ -4,19 +4,14 @@ import XCTest
 
 final class AgentToolLoopTests: XCTestCase {
     func testFileContentDoesNotReachModelBeforeExplicitApproval() async throws {
-        let fixture = try AgentTextFixture(content: "TOP-SECRET-CONTENT")
-        defer { fixture.cleanup() }
-
-        let call = try ToolCall.encoding(
-            name: "file.readText",
-            version: "1",
-            input: ReadTextFileInput(path: fixture.fileURL.path)
-        )
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(content: "TOP-SECRET-CONTENT")
+        let call = try readCall(resourceID)
         let model = ScriptedModel(turns: [
             .toolCall(call),
             .final("I read the authorized file.")
         ])
-        let agent = try makeAgent(model: model)
+        let agent = try makeAgent(model: model, broker: broker)
         let conversationID = UUID()
 
         let first = try await agent.send("Read the selected file", conversationID: conversationID)
@@ -28,6 +23,7 @@ final class AgentToolLoopTests: XCTestCase {
         XCTAssertEqual(beforeApproval.count, 1)
         XCTAssertFalse(beforeApproval[0].messages.contains { $0.content.contains("TOP-SECRET-CONTENT") })
         XCTAssertEqual(pending.permission.capability, .readUserFile)
+        XCTAssertEqual(pending.permission.resource.identifier, resourceID.rawValue)
 
         let resumed = try await agent.approvePermission(
             pendingID: pending.id,
@@ -46,16 +42,11 @@ final class AgentToolLoopTests: XCTestCase {
     }
 
     func testApprovalIsBoundToExactPendingOperationID() async throws {
-        let fixture = try AgentTextFixture(content: "exact")
-        defer { fixture.cleanup() }
-
-        let call = try ToolCall.encoding(
-            name: "file.readText",
-            version: "1",
-            input: ReadTextFileInput(path: fixture.fileURL.path)
-        )
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(content: "exact")
+        let call = try readCall(resourceID)
         let model = ScriptedModel(turns: [.toolCall(call), .final("done")])
-        let agent = try makeAgent(model: model)
+        let agent = try makeAgent(model: model, broker: broker)
 
         let outcome = try await agent.send("Read it", conversationID: UUID())
         guard case .permissionRequired(let pending) = outcome else {
@@ -76,16 +67,11 @@ final class AgentToolLoopTests: XCTestCase {
     }
 
     func testChatTextCannotApprovePendingAction() async throws {
-        let fixture = try AgentTextFixture(content: "not-by-chat")
-        defer { fixture.cleanup() }
-
-        let call = try ToolCall.encoding(
-            name: "file.readText",
-            version: "1",
-            input: ReadTextFileInput(path: fixture.fileURL.path)
-        )
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(content: "not-by-chat")
+        let call = try readCall(resourceID)
         let model = ScriptedModel(turns: [.toolCall(call), .final("done")])
-        let agent = try makeAgent(model: model)
+        let agent = try makeAgent(model: model, broker: broker)
         let conversationID = UUID()
 
         let first = try await agent.send("Please read it", conversationID: conversationID)
@@ -111,19 +97,14 @@ final class AgentToolLoopTests: XCTestCase {
     }
 
     func testDenialIsPersistedAndModelCanContinue() async throws {
-        let fixture = try AgentTextFixture(content: "must-not-leak")
-        defer { fixture.cleanup() }
-
-        let call = try ToolCall.encoding(
-            name: "file.readText",
-            version: "1",
-            input: ReadTextFileInput(path: fixture.fileURL.path)
-        )
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(content: "must-not-leak")
+        let call = try readCall(resourceID)
         let model = ScriptedModel(turns: [
             .toolCall(call),
             .final("I will continue without the file.")
         ])
-        let agent = try makeAgent(model: model)
+        let agent = try makeAgent(model: model, broker: broker)
 
         let first = try await agent.send("Try reading", conversationID: UUID())
         guard case .permissionRequired(let pending) = first else {
@@ -145,16 +126,11 @@ final class AgentToolLoopTests: XCTestCase {
     }
 
     func testToolLoopStopsAtHardStepLimit() async throws {
-        let fixture = try AgentTextFixture(content: "loop")
-        defer { fixture.cleanup() }
-
-        let call = try ToolCall.encoding(
-            name: "file.readText",
-            version: "1",
-            input: ReadTextFileInput(path: fixture.fileURL.path)
-        )
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(content: "loop")
+        let call = try readCall(resourceID)
         let model = RepeatingToolModel(call: call)
-        let agent = try makeAgent(model: model, maxToolSteps: 2)
+        let agent = try makeAgent(model: model, broker: broker, maxToolSteps: 2)
 
         let first = try await agent.send("Loop test", conversationID: UUID())
         guard case .permissionRequired(let pending) = first else {
@@ -212,17 +188,26 @@ final class AgentToolLoopTests: XCTestCase {
 
     private func makeAgent(
         model: any ModelProvider,
+        broker: any UserFileAccessBroker,
         maxToolSteps: Int = 8
     ) throws -> AgentRuntime {
         let store = MemoryConversationStore()
         let permissions = PermissionEngine()
-        let registry = try ToolRegistry(tools: [AnyTool(ReadTextFileTool())])
+        let registry = try ToolRegistry(tools: [AnyTool(ReadTextFileTool(broker: broker))])
         let tools = ToolRuntime(registry: registry, permissions: permissions)
         return AgentRuntime(
             store: store,
             model: model,
             toolRuntime: tools,
             maxToolSteps: maxToolSteps
+        )
+    }
+
+    private func readCall(_ resourceID: UserFileResourceID) throws -> ToolCall {
+        try ToolCall.encoding(
+            name: "file.readText",
+            version: "2",
+            input: ReadTextFileInput(resourceID: resourceID)
         )
     }
 }
@@ -312,21 +297,4 @@ private struct FailingTool: Tool {
 
 private enum FailingToolError: Error {
     case expected
-}
-
-private final class AgentTextFixture {
-    let directoryURL: URL
-    let fileURL: URL
-
-    init(content: String) throws {
-        directoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LumiAgentFixture-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        fileURL = directoryURL.appendingPathComponent("fixture.txt")
-        try Data(content.utf8).write(to: fileURL)
-    }
-
-    func cleanup() {
-        try? FileManager.default.removeItem(at: directoryURL)
-    }
 }
