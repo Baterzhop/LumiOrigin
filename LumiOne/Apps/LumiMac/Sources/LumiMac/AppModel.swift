@@ -13,12 +13,17 @@ final class LumiAppModel: ObservableObject {
     @Published var lastError: String?
     @Published var pendingApproval: PendingToolApproval?
     @Published var selectedFiles: [UserFileDescriptor] = []
+    @Published var knowledgeDocuments: [KnowledgeDocument] = []
+    @Published var indexingResourceID: UserFileResourceID?
+    @Published var isKnowledgeAvailable = false
     @Published var isSafeMode = false
     @Published var isSending = false
 
     private var runtime: AgentRuntime?
     private var store: SQLiteConversationStore?
     private var fileCatalog: SecurityScopedFileCatalog?
+    private var knowledgeStore: SQLiteKnowledgeStore?
+    private var knowledgeEngine: KnowledgeIngestionEngine?
     private let conversationID: UUID
 
     init() {
@@ -106,6 +111,7 @@ final class LumiAppModel: ObservableObject {
         guard
             !isSafeMode,
             !isSending,
+            indexingResourceID == nil,
             pendingApproval == nil,
             let fileCatalog,
             let store
@@ -137,10 +143,46 @@ final class LumiAppModel: ObservableObject {
         }
     }
 
+    func ingestIntoKnowledge(_ descriptor: UserFileDescriptor) {
+        guard
+            !isSafeMode,
+            !isSending,
+            indexingResourceID == nil,
+            pendingApproval == nil,
+            let knowledgeEngine,
+            let knowledgeStore
+        else { return }
+
+        indexingResourceID = descriptor.id
+        status = "Indexing \(descriptor.displayName)…"
+        lastError = nil
+
+        Task {
+            defer { indexingResourceID = nil }
+            do {
+                let result = try await knowledgeEngine.ingest(resourceID: descriptor.id)
+                knowledgeDocuments = try await knowledgeStore.listDocuments()
+                status = "Indexed \(result.document.displayName) — \(result.chunks.count) chunks"
+            } catch {
+                status = "Knowledge ingestion failed"
+                lastError = String(describing: error)
+            }
+        }
+    }
+
+    func isIndexed(_ descriptor: UserFileDescriptor) -> Bool {
+        knowledgeDocuments.contains { $0.sourceResourceID == descriptor.id }
+    }
+
+    func canIngest(_ descriptor: UserFileDescriptor) -> Bool {
+        isKnowledgeAvailable && descriptor.displayName.lowercased().hasSuffix(".pdf")
+    }
+
     func removeFile(_ descriptor: UserFileDescriptor) {
         guard
             !isSafeMode,
             !isSending,
+            indexingResourceID == nil,
             pendingApproval == nil,
             let fileCatalog,
             let store
@@ -202,6 +244,18 @@ final class LumiAppModel: ObservableObject {
         case .ready(let openedStore):
             store = openedStore
 
+            do {
+                let openedKnowledgeStore = try SQLiteKnowledgeStore(
+                    url: root.appendingPathComponent("knowledge.sqlite3")
+                )
+                knowledgeStore = openedKnowledgeStore
+                knowledgeDocuments = try await openedKnowledgeStore.listDocuments()
+            } catch {
+                knowledgeStore = nil
+                isKnowledgeAvailable = false
+                lastError = "Knowledge storage is disabled: \(error)"
+            }
+
             let broker: any UserFileAccessBroker
             do {
                 let catalog = try SecurityScopedFileCatalog(
@@ -210,12 +264,22 @@ final class LumiAppModel: ObservableObject {
                 fileCatalog = catalog
                 selectedFiles = catalog.allDescriptors()
                 broker = catalog
+
+                if let knowledgeStore {
+                    knowledgeEngine = KnowledgeIngestionEngine(
+                        extractor: PDFKitDocumentExtractor(catalog: catalog),
+                        store: knowledgeStore
+                    )
+                    isKnowledgeAvailable = true
+                }
             } catch {
                 // Conversation storage remains valid, so do not silently fall back
                 // to unsafe direct paths. File access is disabled visibly instead.
                 fileCatalog = nil
                 selectedFiles = []
                 broker = UnavailableUserFileAccessBroker()
+                knowledgeEngine = nil
+                isKnowledgeAvailable = false
                 lastError = "User-file access is disabled: \(error)"
             }
 
@@ -286,6 +350,8 @@ final class LumiAppModel: ObservableObject {
     private func enterSafeMode(_ reason: String) {
         runtime = nil
         pendingApproval = nil
+        knowledgeEngine = nil
+        isKnowledgeAvailable = false
         isSafeMode = true
         status = "SAFE MODE"
         lastError = "Persistent runtime is unavailable. Writes and actions are disabled. \(reason)"

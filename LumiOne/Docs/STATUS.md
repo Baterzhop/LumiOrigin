@@ -4,7 +4,7 @@ Status vocabulary: `IDEA` → `SPEC` → `CODED` → `UNIT_TESTED` → `INTEGRAT
 
 | Capability | Status | Evidence / next gate |
 |---|---|---|
-| Split LumiCore / LumiMac layout | INTEGRATED | GitHub CI tests LumiCore independently on Linux and now builds + tests macOS platform support separately |
+| Split LumiCore / LumiMac layout | INTEGRATED | GitHub CI tests LumiCore independently on Linux and builds + tests macOS platform support separately |
 | Single AgentRuntime | INTEGRATED | request, model-turn, native tool-loop and permission-flow tests pass; macOS UI compiles |
 | SQLite conversation persistence | UNIT_TESTED | restart/reopen durability test passes in CI; interactive app restart still pending |
 | Visible storage Safe Mode | UNIT_TESTED | bootstrap failure test passes; UI compiles on macOS |
@@ -16,9 +16,10 @@ Status vocabulary: `IDEA` → `SPEC` → `CODED` → `UNIT_TESTED` → `INTEGRAT
 | File read tool | INTEGRATED | `file.readText@2` is bounded, UTF-8-only and accepts only broker-registered opaque `resourceID` values; raw model-supplied paths are not an authority boundary |
 | Native local-model tool calling | INTEGRATED | OpenAI-compatible `tools` + `tool_calls`, provider call IDs, schema mapping and full protected round-trip tested; live llama.cpp/local-server E2E pending |
 | macOS file access boundary | INTEGRATED | `NSOpenPanel → SecurityScopedFileCatalog → opaque resourceID → ToolRuntime → PermissionEngine`; persistent bookmarks and catalog reopen are tested on macOS CI |
-| Knowledge ingestion / PDF | IDEA | next vertical slice: trusted selected resource → platform text extraction → provenance-preserving chunks → durable KnowledgeStore |
-| Long-term user memory | IDEA | after Knowledge boundary is stable |
-| Spreadsheet / Table Assistant | IDEA | after Knowledge/file ingestion is stable |
+| Knowledge ingestion / PDF | INTEGRATED | trusted opaque resource → PDFKit extraction → page provenance → deterministic bounded chunks → transactional SQLite KnowledgeStore; reopen and rollback tests pass |
+| Grounded knowledge retrieval / citations | IDEA | next vertical slice: measured lexical retrieval with provenance-preserving citations and a strict context budget before embeddings |
+| Long-term user memory | IDEA | after grounded retrieval and citation boundaries are stable |
+| Spreadsheet / Table Assistant | IDEA | after Knowledge retrieval/file ingestion is stable |
 | TaskEngine | IDEA | after interactive tool execution is stable |
 | Voice / Avatar | IDEA | after 1.0 core gates |
 | DeveloperAgent / Darwin evals | IDEA | after 1.0 |
@@ -26,7 +27,7 @@ Status vocabulary: `IDEA` → `SPEC` → `CODED` → `UNIT_TESTED` → `INTEGRAT
 
 ## Automated evidence
 
-Current Linux Core CI covers **31 tests with zero failures**. The tested security/runtime invariants include:
+Current Linux Core CI covers **38 tests with zero failures**. The tested security/runtime/knowledge invariants include:
 
 - user input persists before model/tool execution;
 - storage failure enters Safe Mode rather than silent RAM fallback;
@@ -47,13 +48,24 @@ Current Linux Core CI covers **31 tests with zero failures**. The tested securit
 - durable tool history reconstructs a valid `assistant tool_call → tool result` exchange;
 - a native provider round-trip pauses for permission, executes only after approval, persists the result, and resumes the model;
 - `UserFileResourceID` is encoded as an opaque JSON string rather than a filesystem-path object;
-- a model-invented/unregistered user-file resource fails before Lumi can show an approval prompt.
+- a model-invented/unregistered user-file resource fails before Lumi can show an approval prompt;
+- document extraction cannot substitute a different opaque source identity;
+- chunking is deterministic, bounded and preserves page provenance;
+- blank/image-only extracted text produces no visible knowledge document;
+- re-ingestion preserves document identity/creation time and replaces old chunks instead of duplicating them;
+- knowledge survives SQLite store reopen;
+- extraction failure leaves existing knowledge untouched;
+- a mid-transaction chunk failure rolls the entire knowledge replacement back.
 
-macOS platform CI additionally covers **3 `SecurityScopedFileCatalog` tests with zero failures** and a successful LumiMac build:
+macOS platform CI covers **7 tests with zero failures** and a successful LumiMac build:
 
 - a selected file survives catalog reopen and remains readable through its persisted bookmark;
 - registering the same selected file reuses its stable opaque resource identity;
-- unknown resource IDs fail closed on the macOS broker as well as in Core.
+- unknown resource IDs fail closed on the macOS broker as well as in Core;
+- PDFKit extraction preserves opaque source identity and one-based page provenance;
+- non-PDF resources fail through a structured unsupported-resource path;
+- blank/image-only PDFs report an explicit no-extractable-text result;
+- selected PDF → trusted bookmark → PDFKit → KnowledgeIngestionEngine → SQLite KnowledgeStore → reopen succeeds end-to-end inside the automated platform boundary.
 
 ## Golden Test 001 — durability
 
@@ -74,3 +86,9 @@ The filesystem authority boundary is tested independently on macOS:
 `explicit NSOpenPanel selection → security-scoped bookmark → opaque resourceID → catalog reopen → bounded broker read`.
 
 The remaining E2E gate is one real interactive macOS run against the chosen local model server, using a user-selected file through `NSOpenPanel`. No capability is marked `E2E_TESTED` solely from mocked HTTP or automated bookmark tests.
+
+## Golden Test 003 — durable PDF knowledge ingestion
+
+A user-selected PDF must be extracted only through its trusted registered resource, retain source/page provenance, become bounded deterministic chunks, commit atomically to the dedicated KnowledgeStore, and survive store reopen.
+
+Automated Core and macOS integration evidence passes. OCR, semantic retrieval and model-grounded citations are deliberately separate phases; successful PDF ingestion is not claimed as retrieval quality.

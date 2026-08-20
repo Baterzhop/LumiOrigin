@@ -132,6 +132,38 @@ public final class SecurityScopedFileCatalog: UserFileAccessBroker, @unchecked S
             throw UserFileAccessError.invalidLimit
         }
 
+        return try withSecurityScopedURL(resourceID: resourceID) { resolvedURL, descriptor in
+            let handle: FileHandle
+            do {
+                handle = try FileHandle(forReadingFrom: resolvedURL)
+            } catch {
+                throw UserFileAccessError.resourceUnavailable(resourceID)
+            }
+            defer { try? handle.close() }
+
+            let raw = try handle.read(upToCount: maxBytes + 1) ?? Data()
+            let truncated = raw.count > maxBytes
+            let data = truncated ? Data(raw.prefix(maxBytes)) : raw
+
+            guard let content = String(data: data, encoding: .utf8) else {
+                throw UserFileAccessError.notUTF8
+            }
+
+            return UserFileTextRead(
+                descriptor: descriptor,
+                content: content,
+                byteCount: data.count,
+                truncated: truncated
+            )
+        }
+    }
+
+    /// Internal platform boundary for adapters such as PDFKit. The URL never
+    /// crosses into LumiCore, model input, chat history, or tool arguments.
+    func withSecurityScopedURL<T>(
+        resourceID: UserFileResourceID,
+        _ body: (URL, UserFileDescriptor) throws -> T
+    ) throws -> T {
         guard let record = lock.withLock({ records[resourceID] }) else {
             throw UserFileAccessError.unknownResource(resourceID)
         }
@@ -160,29 +192,8 @@ public final class SecurityScopedFileCatalog: UserFileAccessBroker, @unchecked S
             try refreshBookmark(resourceID: resourceID, resolvedURL: resolvedURL)
         }
 
-        let handle: FileHandle
-        do {
-            handle = try FileHandle(forReadingFrom: resolvedURL)
-        } catch {
-            throw UserFileAccessError.resourceUnavailable(resourceID)
-        }
-        defer { try? handle.close() }
-
-        let raw = try handle.read(upToCount: maxBytes + 1) ?? Data()
-        let truncated = raw.count > maxBytes
-        let data = truncated ? Data(raw.prefix(maxBytes)) : raw
-
-        guard let content = String(data: data, encoding: .utf8) else {
-            throw UserFileAccessError.notUTF8
-        }
-
-        let descriptor = try descriptor(for: resourceID)
-        return UserFileTextRead(
-            descriptor: descriptor,
-            content: content,
-            byteCount: data.count,
-            truncated: truncated
-        )
+        let trustedDescriptor = try descriptor(for: resourceID)
+        return try body(resolvedURL, trustedDescriptor)
     }
 
     private func refreshBookmark(
