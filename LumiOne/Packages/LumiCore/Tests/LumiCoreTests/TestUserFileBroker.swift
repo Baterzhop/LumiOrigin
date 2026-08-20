@@ -26,17 +26,14 @@ final class TestUserFileBroker: UserFileAccessBroker, @unchecked Sendable {
             data: Data(content.utf8)
         )
 
-        lock.lock()
-        entries[id] = entry
-        lock.unlock()
+        lock.withLock {
+            entries[id] = entry
+        }
         return id
     }
 
     func descriptor(for id: UserFileResourceID) throws -> UserFileDescriptor {
-        lock.lock()
-        let entry = entries[id]
-        lock.unlock()
-
+        let entry = lock.withLock { entries[id] }
         guard let entry else {
             throw UserFileAccessError.unknownResource(id)
         }
@@ -51,10 +48,7 @@ final class TestUserFileBroker: UserFileAccessBroker, @unchecked Sendable {
             throw UserFileAccessError.invalidLimit
         }
 
-        lock.lock()
-        let entry = entries[resourceID]
-        lock.unlock()
-
+        let entry = lock.withLock { entries[resourceID] }
         guard let entry else {
             throw UserFileAccessError.unknownResource(resourceID)
         }
