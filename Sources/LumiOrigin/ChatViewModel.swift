@@ -12,6 +12,10 @@ final class ChatViewModel: ObservableObject {
     @Published var selectedProfile = "auto"
     @Published var lastIntent: LumiIntent = .chat
     @Published var contextHits: [KnowledgeHit] = []
+    @Published var relevantMemories: [MemoryHit] = []
+    @Published var storedMemories: [MemoryRecord] = []
+    @Published var memoryDraft = ""
+    @Published var editingMemoryID: UUID?
     @Published var contextBudget: ContextBudgetReport?
     @Published var citationReport: CitationReport = .empty
     @Published var status = "Local-first"
@@ -25,6 +29,7 @@ final class ChatViewModel: ObservableObject {
     init(engine: LumiEngine = LumiEngine.persistentDefault()) {
         self.engine = engine
         restoreHistory()
+        refreshMemories()
     }
 
     func send() {
@@ -57,6 +62,7 @@ final class ChatViewModel: ObservableObject {
                         streamingText = ""
                         lastIntent = reply.intent
                         contextHits = reply.context
+                        relevantMemories = reply.memories
                         contextBudget = reply.contextBudget
                         citationReport = reply.citationReport
                         runtime = reply.runtime
@@ -96,6 +102,7 @@ final class ChatViewModel: ObservableObject {
             await engine.clearConversation()
             messages = []
             contextHits = []
+            relevantMemories = []
             contextBudget = nil
             citationReport = .empty
             streamingText = ""
@@ -108,14 +115,68 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    func saveMemoryDraft() {
+        let clean = memoryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+
+        Task {
+            do {
+                if let editingMemoryID {
+                    _ = try await engine.updateMemory(id: editingMemoryID, content: clean)
+                } else {
+                    _ = try await engine.remember(clean, kind: .semantic, importance: 0.7)
+                }
+                memoryDraft = ""
+                editingMemoryID = nil
+                refreshMemories()
+            } catch {
+                lastError = error.localizedDescription
+                status = "Memory error"
+            }
+        }
+    }
+
+    func beginEditingMemory(_ memory: MemoryRecord) {
+        editingMemoryID = memory.id
+        memoryDraft = memory.content
+    }
+
+    func cancelMemoryEdit() {
+        editingMemoryID = nil
+        memoryDraft = ""
+    }
+
+    func forgetMemory(_ memory: MemoryRecord) {
+        Task {
+            do {
+                try await engine.forgetMemory(id: memory.id)
+                relevantMemories.removeAll { $0.record.id == memory.id }
+                refreshMemories()
+            } catch {
+                lastError = error.localizedDescription
+                status = "Memory error"
+            }
+        }
+    }
+
+    func refreshMemories() {
+        Task {
+            do {
+                storedMemories = try await engine.storedMemories(limit: 50)
+            } catch MemoryError.unavailable {
+                storedMemories = []
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
     private func restoreHistory() {
         Task {
             do {
                 let restored = try await engine.restoreConversation()
                 messages = restored
-                if !restored.isEmpty {
-                    status = "History restored"
-                }
+                if !restored.isEmpty { status = "History restored" }
             } catch {
                 status = "Storage error"
                 lastError = error.localizedDescription
@@ -136,12 +197,9 @@ final class ChatViewModel: ObservableObject {
         }
 
         switch runtime.provider {
-        case .ollama:
-            status = "Model ready"
-        case .localFallback:
-            status = "Fallback mode"
-        case .unknown:
-            status = "Model error"
+        case .ollama: status = "Model ready"
+        case .localFallback: status = "Fallback mode"
+        case .unknown: status = "Model error"
         }
     }
 }
