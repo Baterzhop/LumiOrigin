@@ -11,7 +11,7 @@ struct ContentView: View {
         } detail: {
             chat
         }
-        .frame(minWidth: 1040, minHeight: 700)
+        .frame(minWidth: 1100, minHeight: 720)
         .task { await model.refreshRuntime() }
         .fileImporter(
             isPresented: $showImporter,
@@ -54,6 +54,56 @@ struct ContentView: View {
                 }
             }
 
+            Section("Agent tools · M3") {
+                Label("\(model.toolCount) registered tools", systemImage: "wrench.and.screwdriver")
+                Text(model.toolWorkspace)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+
+                TextField("Agent goal…", text: $model.agentGoal, axis: .vertical)
+                    .lineLimit(1...4)
+                Button {
+                    model.runAgentTask()
+                } label: {
+                    Label(model.isRunningAgent ? "Working…" : "Run bounded task", systemImage: "play.circle")
+                }
+                .disabled(model.agentGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isRunningAgent)
+
+                Text(model.agentStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let task = model.agentTask {
+                    LabeledContent("State", value: task.status)
+                    LabeledContent("Steps", value: "\(task.stepCount)/\(task.maxSteps)")
+                }
+
+                if let call = model.pendingToolCall {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Approval required")
+                            .font(.caption.weight(.semibold))
+                        Text(call.toolName)
+                            .font(.caption.monospaced())
+                        Text("Risk: \(call.risk)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Button("Deny", role: .destructive) {
+                                model.denyPendingTool()
+                            }
+                            Button("Approve") {
+                                model.approvePendingTool()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    .padding(8)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+
             Section("Conversation") {
                 Text(model.conversationID ?? "New conversation")
                     .font(.caption.monospaced())
@@ -65,8 +115,8 @@ struct ContentView: View {
             Section("Capabilities") {
                 Label("SSE streaming", systemImage: "waveform")
                 Label("Hybrid RAG + citations", systemImage: "text.magnifyingglass")
-                Label("Cancel generation", systemImage: "stop.circle")
-                Label("Durable messages", systemImage: "externaldrive")
+                Label("Sandboxed tools + approval", systemImage: "lock.shield")
+                Label("Durable audit log", systemImage: "list.bullet.rectangle")
             }
         }
         .navigationTitle("Lumi V4")
@@ -87,12 +137,12 @@ struct ContentView: View {
             Image(systemName: "sparkles").font(.title2)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Lumi").font(.headline)
-                Text("Local-first AI runtime · grounded knowledge")
+                Text("Local-first AI runtime · grounded knowledge · policy-gated tools")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if model.isGenerating { ProgressView().controlSize(.small) }
+            if model.isGenerating || model.isRunningAgent { ProgressView().controlSize(.small) }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -108,10 +158,10 @@ struct ContentView: View {
                                 .font(.system(size: 44))
                                 .foregroundStyle(.secondary)
                             Text("Lumi is ready").font(.title3.weight(.semibold))
-                            Text("Import PDF, Markdown, or text files. Lumi retrieves relevant chunks and surfaces their sources alongside streamed answers.")
+                            Text("Chat uses grounded local knowledge. Bounded agent tasks can use sandboxed tools; side effects are blocked until you approve them.")
                                 .multilineTextAlignment(.center)
                                 .foregroundStyle(.secondary)
-                                .frame(maxWidth: 560)
+                                .frame(maxWidth: 600)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 110)
