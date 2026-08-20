@@ -16,6 +16,15 @@ public actor MemoryStore {
         return message
     }
 
+    public func append(_ message: ChatMessage) {
+        messages.append(message)
+        trimIfNeeded()
+    }
+
+    public func replace(with restoredMessages: [ChatMessage]) {
+        messages = Array(restoredMessages.suffix(capacity))
+    }
+
     public func recent(limit: Int = 16) -> [ChatMessage] {
         Array(messages.suffix(max(0, limit)))
     }
