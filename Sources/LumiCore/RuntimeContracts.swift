@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ExecutionMode: String, Codable, Sendable, CaseIterable {
+public enum ExecutionMode: String, Codable, Sendable, CaseIterable, Hashable {
     case direct
     case knowledge
     case agent
@@ -17,7 +17,7 @@ public enum LumiCapability: String, Codable, Sendable, CaseIterable, Hashable {
     case web
 }
 
-public enum RiskLevel: String, Codable, Sendable, CaseIterable {
+public enum RiskLevel: String, Codable, Sendable, CaseIterable, Hashable {
     case low
     case medium
     case high
@@ -61,13 +61,13 @@ public struct RequestClassification: Codable, Hashable, Sendable {
     }
 }
 
-public enum ModelProvider: String, Codable, Sendable {
+public enum ModelProvider: String, Codable, Sendable, Hashable {
     case ollama
     case localFallback
     case unknown
 }
 
-public enum ModelFinishReason: String, Codable, Sendable {
+public enum ModelFinishReason: String, Codable, Sendable, Hashable {
     case stop
     case length
     case cancelled
