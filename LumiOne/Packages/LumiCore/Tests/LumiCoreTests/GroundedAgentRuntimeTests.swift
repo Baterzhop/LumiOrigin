@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import XCTest
 @testable import LumiCore
 
@@ -40,7 +43,8 @@ final class GroundedAgentRuntimeTests: XCTestCase {
             return XCTFail("Expected protected tool action to pause for permission")
         }
 
-        XCTAssertEqual(await contextProvider.callCount(), 1)
+        let initialContextCalls = await contextProvider.callCount()
+        XCTAssertEqual(initialContextCalls, 1)
         let firstRequests = await model.requests()
         XCTAssertEqual(firstRequests.count, 1)
         XCTAssertEqual(firstRequests[0].groundedContext, context)
@@ -61,7 +65,8 @@ final class GroundedAgentRuntimeTests: XCTestCase {
         }
 
         XCTAssertEqual(response.assistantMessage.content, "Grounded answer [K1]")
-        XCTAssertEqual(await contextProvider.callCount(), 1)
+        let finalContextCalls = await contextProvider.callCount()
+        XCTAssertEqual(finalContextCalls, 1)
 
         let requests = await model.requests()
         XCTAssertEqual(requests.count, 2)
@@ -105,7 +110,8 @@ final class GroundedAgentRuntimeTests: XCTestCase {
         }
         XCTAssertEqual(answer, "Evidence answer [K1]")
 
-        let request = try XCTUnwrap(await transport.lastRequest())
+        let capturedRequest = await transport.lastRequest()
+        let request = try XCTUnwrap(capturedRequest)
         let body = try XCTUnwrap(request.httpBody)
         let root = try XCTUnwrap(
             JSONSerialization.jsonObject(with: body) as? [String: Any]
