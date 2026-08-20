@@ -115,6 +115,78 @@ async def test_developer_agent_requires_two_explicit_stages_and_never_merges(tmp
     assert git(root, "branch", "--show-current") == session.branch_name
 
 
+async def test_developer_agent_create_only_change_has_reviewable_actual_diff(tmp_path):
+    root, _ = make_repository(tmp_path)
+    db = Database(tmp_path / "lumi.sqlite3")
+    db.migrate()
+    proposal = DeveloperProposal(
+        summary="Add a note",
+        rationale="Exercise safe creation of a new UTF-8 text file.",
+        changes=[
+            DeveloperFileChange(
+                path="docs/note.md",
+                operation="create",
+                content="# New note\n\nCreated by reviewed proposal.\n",
+                reason="Add documentation.",
+            )
+        ],
+    )
+    runtime = DeveloperRuntime(
+        store=DeveloperStore(db),
+        repository=GitRepository(root),
+        planner=StaticPlanner(proposal),
+        publisher=FakePublisher(),
+        base_branch="main",
+    )
+
+    session = await runtime.create_session("Add a note")
+    session = await runtime.approve_plan(session.id)
+    assert session.status == "ready_to_publish"
+    assert session.proposed_diff is not None
+    assert "/dev/null" in session.proposed_diff
+    assert "b/docs/note.md" in session.proposed_diff
+    assert (root / "docs/note.md").exists()
+
+
+async def test_developer_validation_is_fail_closed_when_local_checks_are_disabled(tmp_path):
+    root, _ = make_repository(tmp_path)
+    (root / "services/core/tests").mkdir(parents=True)
+    (root / "services/core/tests/test_placeholder.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    git(root, "add", "services/core/tests/test_placeholder.py")
+    git(root, "commit", "-m", "add tests")
+
+    db = Database(tmp_path / "lumi.sqlite3")
+    db.migrate()
+    proposal = DeveloperProposal(
+        summary="Add core module",
+        rationale="A Python-core path should require the fixed Python validation profile.",
+        changes=[
+            DeveloperFileChange(
+                path="services/core/example.py",
+                operation="create",
+                content="VALUE = 1\n",
+                reason="Add module.",
+            )
+        ],
+    )
+    runtime = DeveloperRuntime(
+        store=DeveloperStore(db),
+        repository=GitRepository(root, allow_local_checks=False),
+        planner=StaticPlanner(proposal),
+        publisher=FakePublisher(),
+        base_branch="main",
+    )
+
+    session = await runtime.create_session("Add core module")
+    session = await runtime.approve_plan(session.id)
+    assert session.status == "validation_incomplete"
+    assert session.error == "developer_validation_incomplete"
+    assert session.validation[0].status == "skipped"
+    assert session.validation[0].output == "local_check_execution_disabled"
+    with pytest.raises(ValueError, match="developer_session_not_ready_to_publish"):
+        await runtime.publish(session.id)
+
+
 async def test_developer_plan_can_be_denied_without_mutation(tmp_path):
     root, _ = make_repository(tmp_path)
     db = Database(tmp_path / "lumi.sqlite3")
@@ -164,4 +236,15 @@ def test_developer_repository_rejects_escape_paths(tmp_path):
     repository = GitRepository(root)
     change = DeveloperFileChange(path="../outside.txt", operation="create", content="x", reason="escape")
     with pytest.raises(RepositoryError):
+        repository.validate_change(change)
+
+
+def test_developer_repository_rejects_symlink_escape(tmp_path):
+    root, _ = make_repository(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "link").symlink_to(outside, target_is_directory=True)
+    repository = GitRepository(root)
+    change = DeveloperFileChange(path="link/escape.txt", operation="create", content="x", reason="escape")
+    with pytest.raises(RepositoryError, match="developer_path_outside_repository"):
         repository.validate_change(change)
