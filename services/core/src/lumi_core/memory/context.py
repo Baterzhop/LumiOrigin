@@ -51,6 +51,11 @@ class ConversationContextManager:
         self.history_scan_limit = max(20, min(history_scan_limit, 500))
         self.estimator = TokenEstimator()
 
+    def validate_current_message(self, text: str) -> None:
+        # Keep a small margin for role framing. RAG/memory have their own bounded sections.
+        if self.estimator.estimate(text) + 16 > self.max_input_tokens:
+            raise ValueError("message_exceeds_context_budget")
+
     async def build(self, conversation_id: str) -> ContextBundle:
         rows = [
             row
@@ -95,11 +100,22 @@ class ConversationContextManager:
             summary = summary[:max_summary_chars]
 
         wire = [ModelMessage(role=row["role"], content=row["content"]) for row in recent_rows]
-        total = self.estimator.messages(wire) + self.estimator.estimate(summary or "")
+        summary_tokens = self.estimator.estimate(summary or "")
+        allowed_recent = max(128, self.max_input_tokens - summary_tokens)
+        while len(wire) > 1 and self.estimator.messages(wire) > allowed_recent:
+            wire.pop(0)
+
+        total = self.estimator.messages(wire) + summary_tokens
+        # The newest turn is never silently truncated. validate_current_message() rejects an individually oversized turn.
+        if total > self.max_input_tokens and len(wire) > 1:
+            while len(wire) > 1 and total > self.max_input_tokens:
+                wire.pop(0)
+                total = self.estimator.messages(wire) + summary_tokens
+
         return ContextBundle(
             messages=wire,
             summary=summary,
-            estimated_tokens=min(total, self.max_input_tokens),
+            estimated_tokens=total,
             summarized_through_message_id=covered_id,
         )
 
