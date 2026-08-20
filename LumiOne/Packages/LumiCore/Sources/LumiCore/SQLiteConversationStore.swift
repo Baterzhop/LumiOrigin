@@ -17,8 +17,24 @@ public enum SQLiteStoreError: Error, CustomStringConvertible, Sendable {
     }
 }
 
+/// Owns the C SQLite handle and closes it exactly once.
+///
+/// Database access is serialized by `SQLiteConversationStore`. This wrapper keeps
+/// the non-Sendable C pointer out of actor deinitialization while preserving RAII.
+private final class SQLiteConnection: @unchecked Sendable {
+    let raw: OpaquePointer
+
+    init(raw: OpaquePointer) {
+        self.raw = raw
+    }
+
+    deinit {
+        sqlite3_close_v2(raw)
+    }
+}
+
 public actor SQLiteConversationStore: ConversationStore {
-    private var db: OpaquePointer?
+    private let connection: SQLiteConnection
 
     public init(url: URL) throws {
         let directory = url.deletingLastPathComponent()
@@ -27,42 +43,33 @@ public actor SQLiteConversationStore: ConversationStore {
             withIntermediateDirectories: true
         )
 
-        var handle: OpaquePointer?
+        var rawHandle: OpaquePointer?
         let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
-        let result = sqlite3_open_v2(url.path, &handle, flags, nil)
+        let result = sqlite3_open_v2(url.path, &rawHandle, flags, nil)
 
-        guard result == SQLITE_OK, let handle else {
-            let message = handle
+        guard result == SQLITE_OK, let rawHandle else {
+            let message = rawHandle
                 .flatMap { sqlite3_errmsg($0) }
                 .map { String(cString: $0) }
                 ?? "unknown error"
-            if let handle { sqlite3_close(handle) }
+            if let rawHandle { sqlite3_close_v2(rawHandle) }
             throw SQLiteStoreError.openFailed(message)
         }
 
         do {
-            try Self.execute(handle, sql: "PRAGMA foreign_keys = ON;")
-            try Self.execute(handle, sql: "PRAGMA journal_mode = WAL;")
-            try Self.execute(handle, sql: "PRAGMA synchronous = NORMAL;")
-            try Self.execute(handle, sql: Self.schema)
-            self.db = handle
+            try Self.execute(rawHandle, sql: "PRAGMA foreign_keys = ON;")
+            try Self.execute(rawHandle, sql: "PRAGMA journal_mode = WAL;")
+            try Self.execute(rawHandle, sql: "PRAGMA synchronous = NORMAL;")
+            try Self.execute(rawHandle, sql: Self.schema)
+            self.connection = SQLiteConnection(raw: rawHandle)
         } catch {
-            sqlite3_close(handle)
+            sqlite3_close_v2(rawHandle)
             throw error
         }
     }
 
-    deinit {
-        if let db {
-            sqlite3_close(db)
-        }
-    }
-
     public func loadConversation(id: UUID) async throws -> Conversation? {
-        guard let db else {
-            throw SQLiteStoreError.executionFailed("database handle is unavailable")
-        }
-
+        let db = connection.raw
         let conversationSQL = """
         SELECT title, created_at, updated_at
         FROM conversations
@@ -126,9 +133,7 @@ public actor SQLiteConversationStore: ConversationStore {
     }
 
     public func saveConversation(_ conversation: Conversation) async throws {
-        guard let db else {
-            throw SQLiteStoreError.executionFailed("database handle is unavailable")
-        }
+        let db = connection.raw
 
         try Self.execute(db, sql: "BEGIN IMMEDIATE TRANSACTION;")
         do {
