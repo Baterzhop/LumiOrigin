@@ -17,14 +17,11 @@ public struct WorkspaceSandbox: Sendable {
             throw ToolRuntimeError.sandboxViolation("Absolute paths are not allowed.")
         }
 
-        let candidate = rootURL
-            .appendingPathComponent(component)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
+        let candidate = canonical(
+            rootURL.appendingPathComponent(component)
+        )
 
-        guard contains(candidate) else {
-            throw ToolRuntimeError.sandboxViolation("Path escapes the configured workspace root.")
-        }
+        try requireContained(candidate)
 
         if mustExist, !FileManager.default.fileExists(atPath: candidate.path) {
             throw ToolRuntimeError.executionFailed("Path does not exist: \(component)")
@@ -33,9 +30,24 @@ public struct WorkspaceSandbox: Sendable {
         return candidate
     }
 
-    private func contains(_ candidate: URL) -> Bool {
+    public func relativePath(for url: URL) throws -> String {
+        let candidate = canonical(url)
+        try requireContained(candidate)
+        guard candidate.path != rootURL.path else { return "" }
+
+        let rootPrefix = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
+        return String(candidate.path.dropFirst(rootPrefix.count))
+    }
+
+    private func canonical(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    private func requireContained(_ candidate: URL) throws {
         let rootPath = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
-        return candidate.path == rootURL.path || candidate.path.hasPrefix(rootPath)
+        guard candidate.path == rootURL.path || candidate.path.hasPrefix(rootPath) else {
+            throw ToolRuntimeError.sandboxViolation("Path escapes the configured workspace root.")
+        }
     }
 }
 
@@ -82,27 +94,27 @@ public struct ListWorkspaceFilesTool: LumiTool, Sendable {
         )
         .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
 
-        let rows: [ToolValue] = try children.map { child in
-            let safeChild = try sandbox.resolve(relativePath: relativePathFromRoot(child))
+        var rows: [ToolValue] = []
+        rows.reserveCapacity(children.count)
+
+        for child in children {
+            // Canonicalization also resolves symlinks. Entries escaping the workspace are omitted
+            // instead of causing an otherwise safe directory listing to fail in its entirety.
+            guard let safeRelativePath = try? sandbox.relativePath(for: child) else { continue }
+            let safeChild = try sandbox.resolve(relativePath: safeRelativePath)
             let values = try safeChild.resourceValues(forKeys: keys)
             var object: [String: ToolValue] = [
                 "name": .string(safeChild.lastPathComponent),
-                "path": .string(relativePathFromRoot(safeChild)),
+                "path": .string(safeRelativePath),
                 "isDirectory": .boolean(values.isDirectory ?? false)
             ]
             if let size = values.fileSize {
                 object["sizeBytes"] = .integer(size)
             }
-            return .object(object)
+            rows.append(.object(object))
         }
 
         return .array(rows)
-    }
-
-    private func relativePathFromRoot(_ url: URL) -> String {
-        let root = sandbox.rootURL.path.hasSuffix("/") ? sandbox.rootURL.path : sandbox.rootURL.path + "/"
-        if url.path == sandbox.rootURL.path { return "" }
-        return String(url.path.dropFirst(root.count))
     }
 }
 
@@ -161,7 +173,7 @@ public struct ReadWorkspaceTextFileTool: LumiTool, Sendable {
         }
 
         return .object([
-            "path": .string(path),
+            "path": .string(try sandbox.relativePath(for: fileURL)),
             "content": .string(content),
             "sizeBytes": .integer(data.count)
         ])
