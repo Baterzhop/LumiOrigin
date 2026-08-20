@@ -4,6 +4,7 @@ public actor AgentRuntime {
     private let store: any ConversationStore
     private let model: any ModelProvider
     private let toolRuntime: ToolRuntime?
+    private let contextProvider: (any ModelContextProvider)?
     private let maxToolSteps: Int
 
     private var pendingExecutions: [UUID: PendingExecution] = [:]
@@ -15,11 +16,13 @@ public actor AgentRuntime {
         store: any ConversationStore,
         model: any ModelProvider,
         toolRuntime: ToolRuntime? = nil,
+        contextProvider: (any ModelContextProvider)? = nil,
         maxToolSteps: Int = 8
     ) {
         self.store = store
         self.model = model
         self.toolRuntime = toolRuntime
+        self.contextProvider = contextProvider
         self.maxToolSteps = max(1, maxToolSteps)
     }
 
@@ -53,14 +56,23 @@ public actor AgentRuntime {
             conversation.messages.append(userMessage)
             conversation.updatedAt = Date()
 
-            // The user's input is durable before any model or tool execution starts.
+            // The user's input is durable before model, retrieval or tool execution starts.
             phase = .persistingUserMessage
             try await store.saveConversation(conversation)
+
+            let groundedContext: GroundedContext?
+            if let contextProvider {
+                phase = .retrievingKnowledge
+                groundedContext = try await contextProvider.context(for: normalized)
+            } else {
+                groundedContext = nil
+            }
 
             return try await continueRun(
                 conversation: conversation,
                 conversationID: conversationID,
-                completedToolSteps: 0
+                completedToolSteps: 0,
+                groundedContext: groundedContext
             )
         } catch {
             phase = .failed
@@ -89,14 +101,15 @@ public actor AgentRuntime {
 
             switch outcome {
             case .permissionRequired(let changedRequest):
-                // The resource may have changed between approval and execution
-                // (for example a symlink target). Never reuse approval silently.
+                // The resource may have changed between approval and execution.
+                // Never reuse approval silently, and keep the same evidence snapshot.
                 return suspendForPermission(
                     conversation: pending.conversation,
                     conversationID: pending.conversationID,
                     call: pending.call,
                     request: changedRequest,
-                    completedToolSteps: pending.completedToolSteps
+                    completedToolSteps: pending.completedToolSteps,
+                    groundedContext: pending.groundedContext
                 )
 
             case .success(let success):
@@ -108,7 +121,8 @@ public actor AgentRuntime {
                 return try await continueRun(
                     conversation: conversation,
                     conversationID: pending.conversationID,
-                    completedToolSteps: pending.completedToolSteps + 1
+                    completedToolSteps: pending.completedToolSteps + 1,
+                    groundedContext: pending.groundedContext
                 )
             }
         } catch {
@@ -134,7 +148,8 @@ public actor AgentRuntime {
             return try await continueRun(
                 conversation: conversation,
                 conversationID: pending.conversationID,
-                completedToolSteps: pending.completedToolSteps + 1
+                completedToolSteps: pending.completedToolSteps + 1,
+                groundedContext: pending.groundedContext
             )
         } catch {
             phase = .failed
@@ -154,7 +169,8 @@ public actor AgentRuntime {
     private func continueRun(
         conversation: Conversation,
         conversationID: UUID,
-        completedToolSteps: Int
+        completedToolSteps: Int,
+        groundedContext: GroundedContext?
     ) async throws -> RuntimeOutcome {
         phase = .waitingForModel
 
@@ -168,7 +184,8 @@ public actor AgentRuntime {
         let turn = try await model.respond(
             to: ModelRequest(
                 messages: conversation.messages,
-                availableTools: tools
+                availableTools: tools,
+                groundedContext: groundedContext
             )
         )
 
@@ -212,7 +229,8 @@ public actor AgentRuntime {
                     conversationID: conversationID,
                     call: call,
                     request: request,
-                    completedToolSteps: completedToolSteps
+                    completedToolSteps: completedToolSteps,
+                    groundedContext: groundedContext
                 )
 
             case .success(let success):
@@ -224,7 +242,8 @@ public actor AgentRuntime {
                 return try await continueRun(
                     conversation: updated,
                     conversationID: conversationID,
-                    completedToolSteps: completedToolSteps + 1
+                    completedToolSteps: completedToolSteps + 1,
+                    groundedContext: groundedContext
                 )
             }
         }
@@ -235,7 +254,8 @@ public actor AgentRuntime {
         conversationID: UUID,
         call: ToolCall,
         request: PermissionRequest,
-        completedToolSteps: Int
+        completedToolSteps: Int,
+        groundedContext: GroundedContext?
     ) -> RuntimeOutcome {
         let pendingID = UUID()
         let approval = PendingToolApproval(
@@ -251,7 +271,8 @@ public actor AgentRuntime {
             conversationID: conversationID,
             conversation: conversation,
             call: call,
-            completedToolSteps: completedToolSteps
+            completedToolSteps: completedToolSteps,
+            groundedContext: groundedContext
         )
         phase = .awaitingPermission
         return .permissionRequired(approval)
@@ -340,6 +361,7 @@ private struct PendingExecution: Sendable {
     let conversation: Conversation
     let call: ToolCall
     let completedToolSteps: Int
+    let groundedContext: GroundedContext?
 }
 
 public enum AgentRuntimeError: Error, CustomStringConvertible, Sendable {
