@@ -141,8 +141,8 @@ public struct OllamaClient: LLMClient, Sendable {
                 do {
                     let request = try makeURLRequest(modelRequest, stream: true)
                     let startedAt = Date()
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
-                    try validateHTTPResponse(response)
+                    let (bytes, urlResponse) = try await URLSession.shared.bytes(for: request)
+                    try validateHTTPResponse(urlResponse)
 
                     var lineBuffer = Data()
                     var fullContent = ""
@@ -201,7 +201,7 @@ public struct OllamaClient: LLMClient, Sendable {
                     let cleanContent = fullContent.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !cleanContent.isEmpty else { throw LLMError.emptyResponse }
 
-                    let response = ModelResponse(
+                    let modelResponse = ModelResponse(
                         content: cleanContent,
                         runtime: RuntimeMetadata(
                             provider: .ollama,
@@ -212,7 +212,7 @@ public struct OllamaClient: LLMClient, Sendable {
                             usage: responseUsage
                         )
                     )
-                    continuation.yield(.completed(response))
+                    continuation.yield(.completed(modelResponse))
                     continuation.finish()
                 } catch is CancellationError {
                     continuation.finish(throwing: LumiRuntimeError.cancelled)
