@@ -29,6 +29,14 @@ struct ContentView: View {
                 Label(model.status, systemImage: "circle.fill")
                 LabeledContent("Intent", value: model.lastIntent.rawValue)
                 LabeledContent("Memory", value: "\(model.messages.count)")
+
+                if let runtime = model.runtime {
+                    LabeledContent("Provider", value: runtime.provider.rawValue)
+                    LabeledContent("Model", value: runtime.model)
+                    if let latencyMs = runtime.latencyMs {
+                        LabeledContent("Latency", value: "\(latencyMs) ms")
+                    }
+                }
             }
 
             Section("Context") {
