@@ -1,0 +1,7 @@
+[
+  {"query":"Which framework should the native desktop UI use?","relevant":"ui"},
+  {"query":"Which language should replies continue in during a Ukrainian conversation?","relevant":"language"},
+  {"query":"What is the Aurora project codename?","relevant":"project"},
+  {"query":"When does the local project backup window start?","relevant":"backup"},
+  {"query":"What must happen before high risk side effects execute?","relevant":"review"}
+]
