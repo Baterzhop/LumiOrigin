@@ -70,7 +70,9 @@ public actor AgentRuntime {
             return run
         }
         if result.status == .cancelled {
-            return run.replacing(state: .cancelled)
+            let cancelled = run.replacing(state: .cancelled, pendingCall: .some(nil))
+            try await persist(cancelled)
+            return cancelled
         }
 
         run = run.replacing(state: .replanning, pendingCall: .some(nil))
@@ -120,16 +122,9 @@ public actor AgentRuntime {
                 return exceeded
             }
 
-            if run.steps.count >= run.budget.maxSteps || run.toolCallCount >= run.budget.maxToolCalls {
-                let exceeded = run.replacing(
-                    state: .budgetExceeded,
-                    pendingCall: .some(nil),
-                    error: .some("Agent step/tool-call budget exceeded.")
-                )
-                try await persist(exceeded)
-                return exceeded
-            }
-
+            // Always allow one more planning turn after the final permitted observation so the
+            // planner can synthesize a final answer. Budgets are enforced only if it asks for
+            // another tool call.
             let planningState: AgentRunState = run.steps.isEmpty ? .planning : .replanning
             run = run.replacing(state: planningState, pendingCall: .some(nil))
             try await persist(run)
@@ -176,10 +171,12 @@ public actor AgentRuntime {
                 return completed
 
             case .tool(let name, let arguments, let note):
-                if run.toolCallCount >= run.budget.maxToolCalls {
+                guard run.steps.count < run.budget.maxSteps,
+                      run.toolCallCount < run.budget.maxToolCalls else {
                     let exceeded = run.replacing(
                         state: .budgetExceeded,
-                        error: .some("Agent tool-call budget exceeded.")
+                        pendingCall: .some(nil),
+                        error: .some("Agent step/tool-call budget exceeded before another tool execution.")
                     )
                     try await persist(exceeded)
                     return exceeded
@@ -187,7 +184,7 @@ public actor AgentRuntime {
 
                 let call = ToolCall(
                     toolName: name,
-                    arguments: arguments.mapValues(\.toolValue),
+                    arguments: arguments.mapValues { $0.toolValue },
                     origin: .agent
                 )
                 let startedAt = Date()
