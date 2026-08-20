@@ -135,6 +135,8 @@ public struct ToolCallDTO: Decodable, Sendable, Hashable, Identifiable {
     public let status: String
     public let decisionReason: String?
     public let error: String?
+    public let argumentsPreview: String?
+    public let resultPreview: String?
     public let createdAt: String
 
     enum CodingKeys: String, CodingKey {
@@ -144,6 +146,8 @@ public struct ToolCallDTO: Decodable, Sendable, Hashable, Identifiable {
         case risk, status
         case decisionReason = "decision_reason"
         case error
+        case argumentsPreview = "arguments_preview"
+        case resultPreview = "result_preview"
         case createdAt = "created_at"
     }
 }
