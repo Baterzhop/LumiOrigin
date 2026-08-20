@@ -97,6 +97,7 @@ public enum RuntimePhase: String, Codable, Sendable {
     case idle
     case loadingConversation
     case persistingUserMessage
+    case retrievingKnowledge
     case waitingForModel
     case executingTool
     case awaitingPermission
@@ -108,10 +109,19 @@ public enum RuntimePhase: String, Codable, Sendable {
 public struct RuntimeResponse: Sendable {
     public let conversation: Conversation
     public let assistantMessage: ChatMessage
+    /// Only citations validated against the exact grounded context snapshot
+    /// used for this user turn. This is ephemeral response metadata; source
+    /// Knowledge remains durable independently of chat history.
+    public let citations: [KnowledgeCitation]
 
-    public init(conversation: Conversation, assistantMessage: ChatMessage) {
+    public init(
+        conversation: Conversation,
+        assistantMessage: ChatMessage,
+        citations: [KnowledgeCitation] = []
+    ) {
         self.conversation = conversation
         self.assistantMessage = assistantMessage
+        self.citations = citations
     }
 }
 

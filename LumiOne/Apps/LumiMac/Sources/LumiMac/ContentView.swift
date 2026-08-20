@@ -14,6 +14,10 @@ struct ContentView: View {
             }
             Divider()
             conversation
+            if !model.lastCitations.isEmpty {
+                Divider()
+                citationBar
+            }
             if let pending = model.pendingApproval {
                 Divider()
                 permissionPanel(pending)
@@ -103,6 +107,41 @@ struct ContentView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
         }
+    }
+
+    private var citationBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Label("Sources", systemImage: "books.vertical")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(model.lastCitations, id: \.label) { citation in
+                    HStack(spacing: 5) {
+                        Text("[\(citation.label)]")
+                            .fontWeight(.semibold)
+                        Text(citation.displayName)
+                            .lineLimit(1)
+                        Text(pageLabel(citation))
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(.quaternary.opacity(0.45), in: Capsule())
+                    .help("Chunk \(citation.chunkOrdinal + 1) · source \(citation.sourceResourceID.rawValue)")
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func pageLabel(_ citation: KnowledgeCitation) -> String {
+        if citation.pageStart == citation.pageEnd {
+            return "p. \(citation.pageStart)"
+        }
+        return "pp. \(citation.pageStart)–\(citation.pageEnd)"
     }
 
     private var visibleMessages: [ChatMessage] {

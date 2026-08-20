@@ -14,6 +14,7 @@ final class LumiAppModel: ObservableObject {
     @Published var pendingApproval: PendingToolApproval?
     @Published var selectedFiles: [UserFileDescriptor] = []
     @Published var knowledgeDocuments: [KnowledgeDocument] = []
+    @Published var lastCitations: [KnowledgeCitation] = []
     @Published var indexingResourceID: UserFileResourceID?
     @Published var isKnowledgeAvailable = false
     @Published var isSafeMode = false
@@ -55,6 +56,7 @@ final class LumiAppModel: ObservableObject {
         draft = ""
         isSending = true
         lastError = nil
+        lastCitations = []
         status = "Thinking…"
 
         Task {
@@ -205,6 +207,7 @@ final class LumiAppModel: ObservableObject {
         case .completed(let response):
             pendingApproval = nil
             messages = response.conversation.messages
+            lastCitations = response.citations
             status = "Ready"
 
         case .permissionRequired(let pending):
@@ -216,10 +219,9 @@ final class LumiAppModel: ObservableObject {
 
     private func handleRuntimeError(_ error: Error, runtime: AgentRuntime) async {
         lastError = String(describing: error)
+        lastCitations = []
         status = "Runtime error"
 
-        // The user message is persisted before model/tool execution. Reload so
-        // the UI reflects durable state even when a later step fails.
         if let restored = try? await runtime.loadConversation(id: conversationID) {
             messages = restored.messages
         }
@@ -273,8 +275,6 @@ final class LumiAppModel: ObservableObject {
                     isKnowledgeAvailable = true
                 }
             } catch {
-                // Conversation storage remains valid, so do not silently fall back
-                // to unsafe direct paths. File access is disabled visibly instead.
                 fileCatalog = nil
                 selectedFiles = []
                 broker = UnavailableUserFileAccessBroker()
@@ -307,6 +307,15 @@ final class LumiAppModel: ObservableObject {
         ])
         let tools = ToolRuntime(registry: registry, permissions: permissions)
 
+        let contextProvider: (any ModelContextProvider)?
+        if let knowledgeStore {
+            contextProvider = KnowledgeModelContextProvider(
+                retriever: LexicalKnowledgeRetriever(store: knowledgeStore)
+            )
+        } else {
+            contextProvider = nil
+        }
+
         let environment = ProcessInfo.processInfo.environment
         let endpoint = environment["LUMI_MODEL_ENDPOINT"]
             .flatMap(URL.init(string:))
@@ -322,7 +331,8 @@ final class LumiAppModel: ObservableObject {
         runtime = AgentRuntime(
             store: store,
             model: provider,
-            toolRuntime: tools
+            toolRuntime: tools,
+            contextProvider: contextProvider
         )
         pendingApproval = nil
     }
@@ -339,7 +349,6 @@ final class LumiAppModel: ObservableObject {
         } else {
             prompt += "\nUser-selected files currently registered with Lumi:"
             for descriptor in selectedFiles {
-                // Deliberately omit the filesystem location from model context.
                 prompt += "\n- \(descriptor.displayName) — resourceID: \(descriptor.id.rawValue)"
             }
         }
@@ -351,6 +360,7 @@ final class LumiAppModel: ObservableObject {
         runtime = nil
         pendingApproval = nil
         knowledgeEngine = nil
+        lastCitations = []
         isKnowledgeAvailable = false
         isSafeMode = true
         status = "SAFE MODE"

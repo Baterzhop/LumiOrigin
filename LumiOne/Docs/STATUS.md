@@ -5,11 +5,11 @@ Status vocabulary: `IDEA` → `SPEC` → `CODED` → `UNIT_TESTED` → `INTEGRAT
 | Capability | Status | Evidence / next gate |
 |---|---|---|
 | Split LumiCore / LumiMac layout | INTEGRATED | GitHub CI tests LumiCore independently on Linux and builds + tests macOS platform support separately |
-| Single AgentRuntime | INTEGRATED | request, model-turn, native tool-loop and permission-flow tests pass; macOS UI compiles |
+| Single AgentRuntime | INTEGRATED | request, model-turn, native tool-loop, knowledge-context and permission-flow tests pass; macOS UI compiles |
 | SQLite conversation persistence | UNIT_TESTED | restart/reopen durability test passes in CI; interactive app restart still pending |
 | Visible storage Safe Mode | UNIT_TESTED | bootstrap failure test passes; UI compiles on macOS |
-| OpenAI-compatible local model adapter | INTEGRATED | text + native single-tool-call transport are integrated with AgentRuntime under deterministic HTTP tests; live local-server run pending |
-| Conversation UI | INTEGRATED | LumiMac builds successfully on macOS CI; interactive app run still pending |
+| OpenAI-compatible local model adapter | INTEGRATED | text + native single-tool-call transport + grounded evidence envelope are integrated under deterministic HTTP tests; live local-server run pending |
+| Conversation UI | INTEGRATED | LumiMac builds successfully on macOS CI; verified citation metadata is rendered for grounded answers; interactive app run still pending |
 | Tool runtime | INTEGRATED | typed registry/runtime merged; unknown tools and wire-name collisions fail closed; structured results include warnings/metadata |
 | Permissions / PolicyEngine | INTEGRATED | exact opaque resource scopes, once/session grants and macOS Allow/Deny UI are wired and tested |
 | Agent tool loop | INTEGRATED | native typed model decisions, explicit permission suspension/resume, denial flow, durable protocol history and hard step limit tested |
@@ -17,8 +17,8 @@ Status vocabulary: `IDEA` → `SPEC` → `CODED` → `UNIT_TESTED` → `INTEGRAT
 | Native local-model tool calling | INTEGRATED | OpenAI-compatible `tools` + `tool_calls`, provider call IDs, schema mapping and full protected round-trip tested; live llama.cpp/local-server E2E pending |
 | macOS file access boundary | INTEGRATED | `NSOpenPanel → SecurityScopedFileCatalog → opaque resourceID → ToolRuntime → PermissionEngine`; persistent bookmarks and catalog reopen are tested on macOS CI |
 | Knowledge ingestion / PDF | INTEGRATED | trusted opaque resource → PDFKit extraction → page provenance → deterministic bounded chunks → transactional SQLite KnowledgeStore; reopen and rollback tests pass |
-| Grounded knowledge retrieval / citations | IDEA | next vertical slice: measured lexical retrieval with provenance-preserving citations and a strict context budget before embeddings |
-| Long-term user memory | IDEA | after grounded retrieval and citation boundaries are stable |
+| Grounded knowledge retrieval / citations | INTEGRATED | deterministic lexical retrieval, Recall@k/MRR evaluation, bounded untrusted evidence context, stable permission-pause reuse and fail-closed citation validation are wired into LumiMac |
+| Long-term user memory | IDEA | next vertical slice: explicit durable memory records, provenance/confidence, retrieval and consolidation without mixing memory with Knowledge documents |
 | Spreadsheet / Table Assistant | IDEA | after Knowledge retrieval/file ingestion is stable |
 | TaskEngine | IDEA | after interactive tool execution is stable |
 | Voice / Avatar | IDEA | after 1.0 core gates |
@@ -27,7 +27,26 @@ Status vocabulary: `IDEA` → `SPEC` → `CODED` → `UNIT_TESTED` → `INTEGRAT
 
 ## Automated evidence
 
-Current Linux Core CI covers **38 tests with zero failures**. The tested security/runtime/knowledge invariants include:
+Current Linux Core CI covers **53 tests with zero failures**. In addition to the existing durability, tool, permission and Knowledge-ingestion invariants, Phase 6 verifies:
+
+- lexical retrieval returns ranked chunks with document ID, opaque source ID, chunk identity and exact page provenance;
+- ranking and tie-breaking are deterministic;
+- case, punctuation and duplicate query terms normalize consistently;
+- meaningless/no-match queries return no document dump;
+- grounded context obeys explicit hit and character budgets and never partially truncates a citation into false provenance;
+- document text that resembles prompt injection remains explicitly untrusted source data;
+- retrieval quality has deterministic Recall@k and MRR evaluation fixtures before any embedding layer is introduced;
+- `AgentRuntime` retrieves grounded context once per user turn and reuses the exact immutable snapshot across permission/tool pauses;
+- retrieved source text is ephemeral and is not persisted as user/assistant/tool chat history;
+- the OpenAI-compatible payload keeps retrieved source text out of system authority and encloses it as untrusted user-role evidence;
+- citation markers are resolved only against the exact grounded snapshot for that run;
+- duplicate citation markers resolve once in first-use order;
+- unknown citation labels such as `[K99]` fail closed;
+- a citation marker with no grounded context fails closed;
+- an assistant response containing a hallucinated citation is rejected before durable assistant-message persistence;
+- successful grounded responses return structured validated citation metadata for the UI.
+
+The previously established Core invariants remain covered:
 
 - user input persists before model/tool execution;
 - storage failure enters Safe Mode rather than silent RAM fallback;
@@ -42,12 +61,9 @@ Current Linux Core CI covers **38 tests with zero failures**. The tested securit
 - denial is persisted and the model can continue;
 - tool loops stop at a hard step limit;
 - tool failure does not erase the original durable user message;
-- OpenAI-compatible tool schemas are emitted deterministically;
 - native tool calls preserve the provider `tool_call_id`;
 - malformed/unknown/multiple native tool calls fail closed;
 - durable tool history reconstructs a valid `assistant tool_call → tool result` exchange;
-- a native provider round-trip pauses for permission, executes only after approval, persists the result, and resumes the model;
-- `UserFileResourceID` is encoded as an opaque JSON string rather than a filesystem-path object;
 - a model-invented/unregistered user-file resource fails before Lumi can show an approval prompt;
 - document extraction cannot substitute a different opaque source identity;
 - chunking is deterministic, bounded and preserves page provenance;
@@ -91,4 +107,12 @@ The remaining E2E gate is one real interactive macOS run against the chosen loca
 
 A user-selected PDF must be extracted only through its trusted registered resource, retain source/page provenance, become bounded deterministic chunks, commit atomically to the dedicated KnowledgeStore, and survive store reopen.
 
-Automated Core and macOS integration evidence passes. OCR, semantic retrieval and model-grounded citations are deliberately separate phases; successful PDF ingestion is not claimed as retrieval quality.
+Automated Core and macOS integration evidence passes. OCR and semantic/vector retrieval remain deliberately separate phases.
+
+## Golden Test 004 — grounded answer with verified citations
+
+For one user query, Lumi must retrieve a bounded evidence snapshot exactly once, keep that snapshot immutable through any tool/permission pause, send the document text only as explicitly untrusted evidence, and accept citation markers only if they resolve against that exact snapshot.
+
+Automated Core evidence passes for retrieval determinism, context budgeting, prompt-injection-like source text, permission-pause reuse, non-persistence of retrieved context, structured citation resolution and rejection of hallucinated citation labels. LumiMac now wires the lexical retriever to the durable `SQLiteKnowledgeStore` and renders the validated document/page citation metadata.
+
+The remaining gate before calling this `E2E_TESTED` is an interactive macOS run against the chosen local model using an actually indexed PDF and visibly correct cited pages.
