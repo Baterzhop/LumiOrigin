@@ -43,8 +43,6 @@ final class MemoryToolTests: XCTestCase {
         XCTAssertEqual(saved?.revision, 1)
         XCTAssertEqual(saved?.provenance.sourceKind, .approvedModelProposal)
 
-        // The forced one-time grant was consumed. The same key is not silently
-        // delegated for later model-proposed changes in the session.
         let third = try await fixture.runtime.execute(call)
         guard case .permissionRequired = third else {
             return XCTFail("Memory mutation must require a new approval per operation")
@@ -122,8 +120,6 @@ final class MemoryToolTests: XCTestCase {
         XCTAssertEqual(approvedRequest.details["proposedValue"], "Alice")
         _ = await fixture.runtime.grant(approvedRequest, duration: .once)
 
-        // Same capability and same logical memory key, but a changed proposed
-        // value must not consume or reuse the approval for Alice.
         let changed = try await fixture.runtime.execute(changedCall)
         guard case .permissionRequired(let changedRequest) = changed else {
             return XCTFail("Changed memory value must require a new approval")
@@ -131,17 +127,15 @@ final class MemoryToolTests: XCTestCase {
         XCTAssertEqual(changedRequest.resource, approvedRequest.resource)
         XCTAssertEqual(changedRequest.details["proposedValue"], "Mallory")
         XCTAssertNotEqual(changedRequest.details, approvedRequest.details)
-        XCTAssertNil(try await fixture.service.load(key: "profile.name"))
+        let beforeOriginal = try await fixture.service.load(key: "profile.name")
+        XCTAssertNil(beforeOriginal)
 
-        // The original approval remains bound to the exact original operation.
         let original = try await fixture.runtime.execute(approvedCall)
         guard case .success = original else {
             return XCTFail("Original exact operation should still match its grant")
         }
-        XCTAssertEqual(
-            try await fixture.service.load(key: "profile.name")?.value,
-            "Alice"
-        )
+        let persisted = try await fixture.service.load(key: "profile.name")
+        XCTAssertEqual(persisted?.value, "Alice")
     }
 
     func testApprovedReplacementFailsIfRevisionChangesBeforeExecution() async throws {
