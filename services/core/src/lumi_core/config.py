@@ -38,6 +38,7 @@ class Settings:
     developer_base_branch: str
     developer_max_read_bytes: int
     developer_command_timeout_seconds: int
+    developer_allow_local_checks: bool
     developer_github_repository: str | None
     developer_github_token: str | None
 
@@ -68,6 +69,7 @@ class Settings:
             developer_base_branch=os.getenv("LUMI_DEV_BASE_BRANCH", "main").strip() or "main",
             developer_max_read_bytes=int(os.getenv("LUMI_DEV_MAX_READ_BYTES", str(256 * 1024))),
             developer_command_timeout_seconds=int(os.getenv("LUMI_DEV_COMMAND_TIMEOUT", "180")),
+            developer_allow_local_checks=_env_bool("LUMI_DEV_ALLOW_LOCAL_CHECKS", False),
             developer_github_repository=github_repository,
             developer_github_token=github_token,
         )
