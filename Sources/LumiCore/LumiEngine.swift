@@ -7,6 +7,7 @@ public actor LumiEngine {
     public let longTermMemory: MemoryRuntime?
     public let reflections: ReflectionJournal
     public let knowledge: any KnowledgeRetrieving
+    public let toolRuntime: ToolRuntime?
     public let conversationID: UUID
 
     private let classifier: any RequestClassifying
@@ -30,6 +31,7 @@ public actor LumiEngine {
         reflections: ReflectionJournal = ReflectionJournal(),
         knowledge: any KnowledgeRetrieving = KnowledgeIndex(documents: LumiEngine.bootstrapKnowledge),
         conversationStore: any ConversationStore = InMemoryConversationStore(),
+        toolRuntime: ToolRuntime? = nil,
         conversationID: UUID = LumiEngine.defaultConversationID,
         contextManager: ContextBudgetManager = ContextBudgetManager(),
         citationAssembler: CitationAssembler = CitationAssembler()
@@ -43,6 +45,7 @@ public actor LumiEngine {
         self.reflections = reflections
         self.knowledge = knowledge
         self.conversationStore = conversationStore
+        self.toolRuntime = toolRuntime
         self.conversationID = conversationID
         self.contextManager = contextManager
         self.citationAssembler = citationAssembler
@@ -203,6 +206,38 @@ public actor LumiEngine {
         prompts.names
     }
 
+    public func availableTools() async -> [ToolDefinition] {
+        guard let toolRuntime else { return [] }
+        return await toolRuntime.availableTools()
+    }
+
+    /// Executes one already-constructed tool call through the permission, sandbox and audit layers.
+    /// Normal chat generation does not call this method automatically in ToolRuntime V1.
+    public func executeTool(
+        _ call: ToolCall,
+        confirmation: ToolConfirmation? = nil
+    ) async -> ToolResult {
+        guard let toolRuntime else {
+            return ToolResult(
+                callID: call.id,
+                toolName: call.toolName,
+                status: .denied,
+                error: "ToolRuntime is not configured for this LumiEngine."
+            )
+        }
+        return await toolRuntime.execute(call, confirmation: confirmation)
+    }
+
+    public func recentToolAudit(limit: Int = 50) async -> [ToolAuditEvent] {
+        guard let toolRuntime else { return [] }
+        return await toolRuntime.recentAudit(limit: limit)
+    }
+
+    public func toolAuditIssue() async -> String? {
+        guard let toolRuntime else { return nil }
+        return await toolRuntime.auditIssue()
+    }
+
     @discardableResult
     public func remember(
         _ content: String,
@@ -357,13 +392,28 @@ public actor LumiEngine {
         _ profile: PromptProfile,
         classification: RequestClassification
     ) -> PromptProfile {
-        var unavailable: [String] = []
-        if classification.capabilities.contains(.tools) { unavailable.append("external tools/actions") }
-        if classification.capabilities.contains(.web) { unavailable.append("live web access") }
-        guard !unavailable.isEmpty else { return profile }
+        var notices: [String] = []
+
+        if classification.capabilities.contains(.tools) {
+            if toolRuntime == nil {
+                notices.append("External tools/actions are not configured in this runtime.")
+            } else {
+                notices.append(
+                    "A sandboxed ToolRuntime exists, but normal chat generation cannot invoke tools automatically in this phase. Do not claim that an external action or file operation was executed unless an actual ToolResult is supplied by the runtime."
+                )
+            }
+        }
+
+        if classification.capabilities.contains(.web) {
+            notices.append("Live web access is not connected in this runtime.")
+        }
+
+        guard !notices.isEmpty else { return profile }
 
         let notice = """
-        Runtime capability boundary: this request appears to require \(unavailable.joined(separator: " and ")), but those capabilities are not connected in this runtime yet. Do not claim that you executed an external action, changed a file/account, or accessed live/current data. Clearly distinguish what you can answer from available local context from what would require the missing capability.
+        Runtime capability boundary:
+        \(notices.map { "- " + $0 }.joined(separator: "\n"))
+        Clearly distinguish what you can answer from local context from what would require a missing or not-yet-invoked capability.
         """
 
         return PromptProfile(
@@ -436,6 +486,12 @@ public actor LumiEngine {
             title: "Conversation and long-term memory",
             text: "Conversation history, bounded working memory, and user-controlled long-term memory are separate layers. Long-term memory is persisted locally and has an explicit lifecycle.",
             tags: ["memory", "privacy", "v4"]
+        ),
+        KnowledgeDocument(
+            id: "lumi-tools",
+            title: "ToolRuntime security boundary",
+            text: "ToolRuntime V1 supports typed, audited and sandboxed read-only tools. Write and destructive tools remain disabled, and normal chat generation does not automatically execute tools until the agent runtime is introduced.",
+            tags: ["tools", "security", "v4"]
         )
     ]
 }
