@@ -22,11 +22,13 @@ public struct RememberMemoryInput: Codable, Equatable, Sendable {
     }
 }
 
+/// Tool result intentionally omits the raw memory value. The model already
+/// proposed that value, and duplicating it into hidden durable tool history
+/// would create an unnecessary second retention path.
 public struct RememberMemoryOutput: Codable, Equatable, Sendable {
     public let memoryID: UUID
     public let key: String
     public let kind: MemoryKind
-    public let value: String
     public let confidence: Double
     public let revision: Int
     public let created: Bool
@@ -35,7 +37,6 @@ public struct RememberMemoryOutput: Codable, Equatable, Sendable {
         memoryID = result.record.id
         key = result.record.key
         kind = result.record.kind
-        value = result.record.value
         confidence = result.record.confidence
         revision = result.record.revision
         created = result.created
@@ -148,6 +149,23 @@ public struct RememberMemoryTool: Tool {
             "created": .bool(output.created),
             "provenance": .string(MemoryProvenance.SourceKind.approvedModelProposal.rawValue)
         ]
+    }
+
+    public func historyArguments(for input: RememberMemoryInput) throws -> JSONValue {
+        let key = try MemoryService.validatedKey(input.key)
+        try MemoryService.validateConfidence(input.confidence)
+        var object: [String: JSONValue] = [
+            "key": .string(key),
+            "kind": .string(input.kind.rawValue),
+            "value": .string("<redacted:persistent-memory-value>"),
+            "confidence": .number(input.confidence)
+        ]
+        if let expectedRevision = input.expectedRevision {
+            object["expectedRevision"] = .number(Double(expectedRevision))
+        } else {
+            object["expectedRevision"] = .null
+        }
+        return .object(object)
     }
 
     private static func preview(_ value: String) -> String {
