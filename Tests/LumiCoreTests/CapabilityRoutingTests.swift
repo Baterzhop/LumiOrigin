@@ -90,7 +90,7 @@ final class CapabilityRoutingTests: XCTestCase {
         XCTAssertTrue(reply.context.isEmpty)
     }
 
-    func testUnsupportedToolCapabilityAddsTruthfulRuntimeBoundary() async {
+    func testUnconfiguredToolCapabilityAddsTruthfulRuntimeBoundary() async {
         let recorder = RoutingRequestRecorder()
         let engine = LumiEngine(llm: RoutingRecordingClient(recorder: recorder))
 
@@ -99,9 +99,9 @@ final class CapabilityRoutingTests: XCTestCase {
 
         XCTAssertEqual(reply.classification.mode, .agent)
         XCTAssertEqual(reply.classification.risk, .high)
-        XCTAssertTrue(prompt?.contains("not connected in this runtime yet") == true)
-        XCTAssertTrue(prompt?.contains("Do not claim") == true)
-        XCTAssertTrue(prompt?.contains("external tools/actions") == true)
+        XCTAssertTrue(prompt?.contains("not configured in this runtime") == true)
+        XCTAssertTrue(prompt?.contains("Clearly distinguish") == true)
+        XCTAssertTrue(prompt?.contains("External tools/actions") == true)
     }
 }
 
