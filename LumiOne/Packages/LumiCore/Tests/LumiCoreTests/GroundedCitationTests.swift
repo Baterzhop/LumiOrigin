@@ -150,13 +150,13 @@ final class GroundedCitationTests: XCTestCase {
 }
 
 private actor CitationFixedContextProvider: ModelContextProvider {
-    let value: GroundedContext
+    let value: ModelContextSnapshot
 
     init(context: GroundedContext) {
-        value = context
+        value = ModelContextSnapshot(groundedKnowledge: context)
     }
 
-    func context(for query: String) async throws -> GroundedContext? {
+    func context(for query: String) async throws -> ModelContextSnapshot? {
         value
     }
 }
