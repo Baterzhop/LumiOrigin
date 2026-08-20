@@ -16,7 +16,7 @@ struct ContentView: View {
 
     private var sidebar: some View {
         List {
-            Section("Mode") {
+            Section("Profile") {
                 Picker("Profile", selection: $model.selectedProfile) {
                     ForEach(model.profiles, id: \.self) { profile in
                         Text(profile.capitalized).tag(profile)
@@ -25,9 +25,26 @@ struct ContentView: View {
                 .pickerStyle(.menu)
             }
 
+            Section("Routing") {
+                LabeledContent("Execution", value: model.classification.mode.rawValue)
+                LabeledContent("Intent", value: model.lastIntent.rawValue)
+                LabeledContent("Risk", value: model.classification.risk.rawValue)
+                LabeledContent(
+                    "Confidence",
+                    value: model.classification.confidence.formatted(.percent.precision(.fractionLength(0)))
+                )
+                Text(model.classification.capabilities.map(\.rawValue).sorted().joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !model.classification.reasons.isEmpty {
+                    Text(model.classification.reasons.joined(separator: " · "))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Runtime") {
                 Label(model.status, systemImage: "circle.fill")
-                LabeledContent("Intent", value: model.lastIntent.rawValue)
                 LabeledContent("Messages", value: "\(model.messages.count)")
 
                 if let runtime = model.runtime {
@@ -221,7 +238,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Lumi")
                     .font(.headline)
-                Text("Local-first · persistent memory · hybrid RAG · verified citations")
+                Text("Capability-routed · persistent memory · hybrid RAG · verified citations")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -270,7 +287,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             Text("Lumi is ready")
                 .font(.title3.weight(.semibold))
-            Text("Conversation history, user-controlled memory and the knowledge index are stored locally. Ollama provides generation and embeddings when available.")
+            Text("Requests are classified into explicit capabilities before context is assembled. Conversation history, memory and knowledge remain local-first.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 500)
