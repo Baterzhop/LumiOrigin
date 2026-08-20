@@ -21,11 +21,7 @@ final class ChatViewModel: ObservableObject {
     private let engine: LumiEngine
     private var sendTask: Task<Void, Never>?
 
-    init(
-        engine: LumiEngine = LumiEngine(
-            conversationStore: SQLiteConversationStore.defaultStore()
-        )
-    ) {
+    init(engine: LumiEngine = LumiEngine.persistentDefault()) {
         self.engine = engine
         restoreHistory()
     }
