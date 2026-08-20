@@ -1,32 +1,28 @@
 import Foundation
 
+/// Compatibility adapter for profile selection and legacy callers.
+/// Runtime behavior is driven by `RequestClassification`, not by this enum alone.
 public struct IntentRouter: Sendable {
     public init() {}
 
     public func detect(_ input: String) -> LumiIntent {
-        let text = input.lowercased()
+        let classification = HeuristicRequestClassifier().classify(LumiRequest(input: input))
+        return intent(for: classification)
+    }
 
-        let coding = [
-            "code", "swift", "python", "bug", "compile", "refactor", "api", "git",
-            "код", "свіфт", "пайтон", "помилка", "компілю", "рефактор", "гит", "github"
-        ]
-        if coding.contains(where: text.contains) { return .coding }
-
-        let tool = [
-            "run ", "execute ", "open ", "delete ", "create file", "запусти", "виконай", "відкрий", "видали", "створи файл"
-        ]
-        if tool.contains(where: text.contains) { return .tool }
-
-        let reflection = [
-            "reflect", "why did you", "summarize our", "self review", "рефлекс", "чому ти", "підсумуй нашу", "проаналізуй себе"
-        ]
-        if reflection.contains(where: text.contains) { return .reflection }
-
-        let knowledge = [
-            "search", "find", "document", "manual", "knowledge", "what does", "знайди", "пошук", "документ", "мануал", "що в документі"
-        ]
-        if knowledge.contains(where: text.contains) { return .knowledge }
-
+    public func intent(for classification: RequestClassification) -> LumiIntent {
+        if classification.capabilities.contains(.tools) || classification.mode == .agent {
+            return .tool
+        }
+        if classification.capabilities.contains(.coding) {
+            return .coding
+        }
+        if classification.capabilities.contains(.reflection) {
+            return .reflection
+        }
+        if classification.capabilities.contains(.retrieval) || classification.capabilities.contains(.files) {
+            return .knowledge
+        }
         return .chat
     }
 }
