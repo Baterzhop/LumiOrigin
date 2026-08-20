@@ -14,6 +14,7 @@ struct ChatBubble: Identifiable, Equatable {
     var model: String?
     var finishReason: String?
     var citations: [CitationDTO]
+    var memories: [MemoryHitDTO]
 
     init(
         id: UUID = UUID(),
@@ -22,7 +23,8 @@ struct ChatBubble: Identifiable, Equatable {
         provider: String? = nil,
         model: String? = nil,
         finishReason: String? = nil,
-        citations: [CitationDTO] = []
+        citations: [CitationDTO] = [],
+        memories: [MemoryHitDTO] = []
     ) {
         self.id = id
         self.role = role
@@ -31,5 +33,6 @@ struct ChatBubble: Identifiable, Equatable {
         self.model = model
         self.finishReason = finishReason
         self.citations = citations
+        self.memories = memories
     }
 }
