@@ -10,6 +10,22 @@ struct ChatRequestDTO: Encodable, Sendable {
     }
 }
 
+struct TaskCreateRequestDTO: Encodable, Sendable {
+    let goal: String
+    let conversationID: String?
+    let maxSteps: Int
+    let maxToolCalls: Int
+    let maxSeconds: Int
+
+    enum CodingKeys: String, CodingKey {
+        case goal
+        case conversationID = "conversation_id"
+        case maxSteps = "max_steps"
+        case maxToolCalls = "max_tool_calls"
+        case maxSeconds = "max_seconds"
+    }
+}
+
 public struct CitationDTO: Decodable, Sendable, Hashable, Identifiable {
     public let chunkID: String
     public let documentID: String
@@ -26,13 +42,7 @@ public struct CitationDTO: Decodable, Sendable, Hashable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case chunkID = "chunk_id"
         case documentID = "document_id"
-        case title
-        case source
-        case text
-        case score
-        case page
-        case section
-        case retrieval
+        case title, source, text, score, page, section, retrieval
     }
 }
 
@@ -62,13 +72,9 @@ public struct ChatStreamEvent: Decodable, Sendable {
         case type
         case generationID = "generation_id"
         case conversationID = "conversation_id"
-        case delta
-        case content
+        case delta, content
         case messageID = "message_id"
-        case provider
-        case model
-        case fallback
-        case error
+        case provider, model, fallback, error
         case finishReason = "finish_reason"
         case citations
     }
@@ -94,6 +100,17 @@ public struct RuntimeRAGStatus: Decodable, Sendable {
     }
 }
 
+public struct RuntimeToolsStatus: Decodable, Sendable {
+    public let count: Int
+    public let workspace: String
+    public let criticalEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case count, workspace
+        case criticalEnabled = "critical_enabled"
+    }
+}
+
 public struct RuntimeStatusResponse: Decodable, Sendable {
     public let ok: Bool
     public let streaming: Bool
@@ -101,14 +118,62 @@ public struct RuntimeStatusResponse: Decodable, Sendable {
     public let model: String
     public let activeGenerations: Int
     public let rag: RuntimeRAGStatus?
+    public let tools: RuntimeToolsStatus?
 
     enum CodingKeys: String, CodingKey {
-        case ok
-        case streaming
-        case provider
-        case model
+        case ok, streaming, provider, model
         case activeGenerations = "active_generations"
-        case rag
+        case rag, tools
+    }
+}
+
+public struct ToolCallDTO: Decodable, Sendable, Hashable, Identifiable {
+    public let id: String
+    public let taskID: String
+    public let toolName: String
+    public let risk: String
+    public let status: String
+    public let decisionReason: String?
+    public let error: String?
+    public let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case taskID = "task_id"
+        case toolName = "tool_name"
+        case risk, status
+        case decisionReason = "decision_reason"
+        case error
+        case createdAt = "created_at"
+    }
+}
+
+public struct AgentTaskDTO: Decodable, Sendable, Identifiable {
+    public let id: String
+    public let conversationID: String?
+    public let goal: String
+    public let status: String
+    public let stepCount: Int
+    public let maxSteps: Int
+    public let maxToolCalls: Int
+    public let deadlineAt: String?
+    public let resultText: String?
+    public let error: String?
+    public let waitingToolCallID: String?
+    public let toolCalls: [ToolCallDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case conversationID = "conversation_id"
+        case goal, status
+        case stepCount = "step_count"
+        case maxSteps = "max_steps"
+        case maxToolCalls = "max_tool_calls"
+        case deadlineAt = "deadline_at"
+        case resultText = "result_text"
+        case error
+        case waitingToolCallID = "waiting_tool_call_id"
+        case toolCalls = "tool_calls"
     }
 }
 
