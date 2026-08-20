@@ -157,10 +157,12 @@ public actor AgentRuntime {
         completedToolSteps: Int
     ) async throws -> RuntimeOutcome {
         phase = .waitingForModel
-        let tools = if let toolRuntime {
-            await toolRuntime.descriptors()
+
+        let tools: [ToolDescriptor]
+        if let toolRuntime {
+            tools = await toolRuntime.descriptors()
         } else {
-            []
+            tools = []
         }
 
         let turn = try await model.respond(
@@ -172,7 +174,7 @@ public actor AgentRuntime {
 
         switch turn {
         case .final(let content):
-            let normalized = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = content.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             guard !normalized.isEmpty else {
                 throw AgentRuntimeError.emptyFinalResponse
             }
