@@ -1,17 +1,22 @@
 # Lumi macOS client
 
-The native client remains SwiftUI, but V4 moves AI orchestration out of the UI process.
+Milestone M1 turns this directory into the native SwiftUI client for Lumi Core.
 
-The client will own:
+The client owns presentation and transport concerns only:
 
-- chat/task presentation
-- streaming event rendering
-- file picker and user-approved imports
-- approval dialogs for risky tool calls
-- Keychain-backed credentials/settings
-- memory/source inspection UI
-- runtime health/status
+- chat presentation and token streaming
+- generation cancellation
+- runtime/model status
+- conversation identifiers
+- future file picker, source inspection, approvals, and settings
 
-The client will **not** own prompt routing, RAG ranking, model-provider fallback logic, or tool execution policy.
+The client does **not** own prompt routing, RAG ranking, model-provider fallback, memory policy, or tool execution policy.
 
-Implementation begins in Milestone M1 after the core HTTP/event contracts are stable.
+Build after the M1 Swift package files land with:
+
+```bash
+cd apps/macos
+swift build
+```
+
+Run Lumi Core separately on `http://127.0.0.1:8790`.
