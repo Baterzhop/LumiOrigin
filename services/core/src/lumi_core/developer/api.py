@@ -37,7 +37,12 @@ class DeveloperAPI:
 
         resolved = repo_root.expanduser().resolve()
         runtime_source_root = Path(__file__).resolve().parents[5]
-        if resolved == runtime_source_root or runtime_source_root in resolved.parents:
+        overlaps_runtime = (
+            resolved == runtime_source_root
+            or runtime_source_root in resolved.parents
+            or resolved in runtime_source_root.parents
+        )
+        if overlaps_runtime:
             self.disabled_reason = "developer_repo_must_be_separate_checkout"
             return
 
@@ -54,6 +59,7 @@ class DeveloperAPI:
             resolved,
             max_read_bytes=settings.developer_max_read_bytes,
             command_timeout_seconds=settings.developer_command_timeout_seconds,
+            allow_local_checks=settings.developer_allow_local_checks,
         )
         self.runtime = DeveloperRuntime(
             store=DeveloperStore(database),
@@ -84,9 +90,12 @@ def build_developer_router(settings: Settings, database: Database, model_gateway
                 "current_branch": None,
                 "clean": False,
                 "publisher_configured": bool(settings.developer_github_repository and settings.developer_github_token),
+                "local_checks_enabled": settings.developer_allow_local_checks,
                 "error": service.disabled_reason,
             }
-        return await service.runtime.status()
+        result = await service.runtime.status()
+        result["local_checks_enabled"] = settings.developer_allow_local_checks
+        return result
 
     @router.post("/sessions")
     async def create_developer_session(request: DeveloperSessionCreateRequest) -> dict:
