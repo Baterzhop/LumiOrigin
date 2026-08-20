@@ -127,7 +127,7 @@ class DeveloperRuntime:
         await self.repository.verify()
         if await self.repository.current_branch() != session.branch_name:
             raise RepositoryError("developer_wrong_branch_for_validation")
-        self._assert_only_planned_paths(session)
+        await self._assert_only_planned_paths(session)
         self.store.update(session_id, status="validating", error=None)
         self.store.add_event(session_id, "validation_retry_approved", {})
         await self._run_validation(session_id)
@@ -240,11 +240,7 @@ class DeveloperRuntime:
         changed = set(await self.repository.changed_paths())
         return sorted(changed - planned)
 
-    def _assert_only_planned_paths(self, session: DeveloperSessionView) -> None:
-        if session.proposal is None:
-            raise ValueError("developer_session_incomplete")
-
-    async def _assert_only_planned_paths_async(self, session: DeveloperSessionView) -> None:
+    async def _assert_only_planned_paths(self, session: DeveloperSessionView) -> None:
         unexpected = await self._unexpected_paths(session)
         if unexpected:
             raise RepositoryError("developer_unexpected_worktree_changes:" + ",".join(unexpected[:20]))
