@@ -2,8 +2,12 @@ name: Lumi V4 CI
 
 on:
   push:
-    branches: [main, "lumi-v4-*"]
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: lumi-v4-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   core:
