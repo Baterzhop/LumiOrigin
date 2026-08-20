@@ -28,7 +28,7 @@ struct ContentView: View {
             Section("Runtime") {
                 Label(model.status, systemImage: "circle.fill")
                 LabeledContent("Intent", value: model.lastIntent.rawValue)
-                LabeledContent("Memory", value: "\(model.messages.count)")
+                LabeledContent("Messages", value: "\(model.messages.count)")
 
                 if let runtime = model.runtime {
                     LabeledContent("Provider", value: runtime.provider.rawValue)
@@ -46,7 +46,29 @@ struct ContentView: View {
                 }
             }
 
-            Section("Context") {
+            Section("Context budget") {
+                if let budget = model.contextBudget {
+                    LabeledContent(
+                        "Input",
+                        value: "\(budget.estimatedInputTokens) / \(budget.inputBudgetTokens) tok"
+                    )
+                    LabeledContent("System", value: "\(budget.systemTokens) tok")
+                    LabeledContent("History", value: "\(budget.historyTokens) tok")
+                    LabeledContent("Knowledge", value: "\(budget.knowledgeTokens) tok")
+
+                    if budget.droppedMessageCount > 0 {
+                        LabeledContent("History dropped", value: "\(budget.droppedMessageCount)")
+                    }
+                    if budget.droppedKnowledgeCount > 0 {
+                        LabeledContent("Context dropped", value: "\(budget.droppedKnowledgeCount)")
+                    }
+                } else {
+                    Text("No request packed yet")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Retrieved context") {
                 if model.contextHits.isEmpty {
                     Text("No retrieved context")
                         .foregroundStyle(.secondary)
@@ -69,7 +91,7 @@ struct ContentView: View {
                 }
             }
         }
-        .navigationTitle("Lumi V3")
+        .navigationTitle("Lumi V4")
     }
 
     private var chatPanel: some View {
@@ -90,7 +112,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Lumi")
                     .font(.headline)
-                Text("Explicit memory · retrieval · prompt profiles · local model")
+                Text("Local-first · persistent · streaming · token-budgeted")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -148,10 +170,10 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             Text("Lumi is ready")
                 .font(.title3.weight(.semibold))
-            Text("Ollama is used when available. Without it, Lumi stays usable in fallback mode.")
+            Text("Conversation history is stored locally. Ollama is used when available; fallback mode remains available when the model is offline.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: 460)
+                .frame(maxWidth: 500)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 110)
