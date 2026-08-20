@@ -13,6 +13,7 @@ public actor LumiEngine {
     private let llm: any LLMClient
     private let conversationStore: any ConversationStore
     private let contextManager: ContextBudgetManager
+    private let citationAssembler: CitationAssembler
 
     private var hasRestoredConversation = false
     private var storageIssue: String?
@@ -26,7 +27,8 @@ public actor LumiEngine {
         knowledge: any KnowledgeRetrieving = KnowledgeIndex(documents: LumiEngine.bootstrapKnowledge),
         conversationStore: any ConversationStore = InMemoryConversationStore(),
         conversationID: UUID = LumiEngine.defaultConversationID,
-        contextManager: ContextBudgetManager = ContextBudgetManager()
+        contextManager: ContextBudgetManager = ContextBudgetManager(),
+        citationAssembler: CitationAssembler = CitationAssembler()
     ) {
         self.llm = llm
         self.prompts = prompts
@@ -37,6 +39,7 @@ public actor LumiEngine {
         self.conversationStore = conversationStore
         self.conversationID = conversationID
         self.contextManager = contextManager
+        self.citationAssembler = citationAssembler
     }
 
     public func respond(to input: String, profile requestedProfile: String? = nil) async -> LumiReply {
@@ -259,6 +262,10 @@ public actor LumiEngine {
     ) async -> LumiReply {
         let assistant = await appendMessage(role: .assistant, content: completion.content)
         await reflections.record(input: input, intent: intent, response: completion.content)
+        let citationReport = citationAssembler.assemble(
+            response: completion.content,
+            evidence: context
+        )
 
         return LumiReply(
             message: assistant,
@@ -266,7 +273,8 @@ public actor LumiEngine {
             context: context,
             profile: profile.name,
             runtime: completion.runtime,
-            contextBudget: contextBudget
+            contextBudget: contextBudget,
+            citationReport: citationReport
         )
     }
 
