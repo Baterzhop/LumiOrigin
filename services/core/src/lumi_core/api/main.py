@@ -12,6 +12,7 @@ from lumi_core.agent.planner import LLMTaskPlanner
 from lumi_core.agent.runtime import AgentRuntime, ChatResponse, ChatStreamEvent
 from lumi_core.agent.task_runtime import TaskRuntime
 from lumi_core.config import Settings
+from lumi_core.developer.api import build_developer_router
 from lumi_core.memory import ConversationContextManager, MemoryService, MemoryStore
 from lumi_core.models.gateway import ModelGateway, OllamaProvider
 from lumi_core.rag.embeddings import OllamaEmbeddingProvider
@@ -110,6 +111,7 @@ policy_engine = PolicyEngine()
 task_runtime = TaskRuntime(database, tool_registry, policy_engine, LLMTaskPlanner(model_gateway))
 
 app = FastAPI(title="Lumi Core", version=__version__)
+app.include_router(build_developer_router(settings, database, model_gateway))
 
 
 def _sse(event: ChatStreamEvent) -> str:
