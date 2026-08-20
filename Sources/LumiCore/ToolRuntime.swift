@@ -112,17 +112,27 @@ public actor ToolRuntime {
                 error: ToolRuntimeError.toolNotFound(call.toolName).localizedDescription,
                 durationMs: elapsedMs(since: startedAt)
             )
-            await audit(
-                call: call,
-                definition: nil,
-                permission: permission,
-                result: result,
-                startedAt: startedAt
-            )
+            await audit(call: call, definition: nil, permission: permission, result: result, startedAt: startedAt)
             return result
         }
 
         let definition = tool.definition
+
+        do {
+            try validate(arguments: call.arguments, against: definition)
+        } catch {
+            let permission = ToolPermissionDecision.deny("Tool arguments failed schema validation.")
+            let result = ToolResult(
+                callID: call.id,
+                toolName: call.toolName,
+                status: .failed,
+                error: error.localizedDescription,
+                durationMs: elapsedMs(since: startedAt)
+            )
+            await audit(call: call, definition: definition, permission: permission, result: result, startedAt: startedAt)
+            return result
+        }
+
         let permission = policy.evaluate(
             definition: definition,
             call: call,
@@ -138,13 +148,7 @@ public actor ToolRuntime {
                 error: permission.reason,
                 durationMs: elapsedMs(since: startedAt)
             )
-            await audit(
-                call: call,
-                definition: definition,
-                permission: permission,
-                result: result,
-                startedAt: startedAt
-            )
+            await audit(call: call, definition: definition, permission: permission, result: result, startedAt: startedAt)
             return result
 
         case .confirmationRequired:
@@ -155,13 +159,7 @@ public actor ToolRuntime {
                 error: permission.reason,
                 durationMs: elapsedMs(since: startedAt)
             )
-            await audit(
-                call: call,
-                definition: definition,
-                permission: permission,
-                result: result,
-                startedAt: startedAt
-            )
+            await audit(call: call, definition: definition, permission: permission, result: result, startedAt: startedAt)
             return result
 
         case .allowed:
@@ -209,13 +207,7 @@ public actor ToolRuntime {
             )
         }
 
-        await audit(
-            call: call,
-            definition: definition,
-            permission: permission,
-            result: result,
-            startedAt: startedAt
-        )
+        await audit(call: call, definition: definition, permission: permission, result: result, startedAt: startedAt)
         return result
     }
 
@@ -232,6 +224,37 @@ public actor ToolRuntime {
 
     public func auditIssue() -> String? {
         lastAuditIssue
+    }
+
+    private func validate(arguments: [String: ToolValue], against definition: ToolDefinition) throws {
+        let schemaByName = Dictionary(uniqueKeysWithValues: definition.inputSchema.map { ($0.name, $0) })
+
+        for field in definition.inputSchema where field.required {
+            guard arguments[field.name] != nil else {
+                throw ToolRuntimeError.invalidArguments("Missing required field `\(field.name)`.")
+            }
+        }
+
+        for (name, value) in arguments {
+            guard let field = schemaByName[name] else {
+                throw ToolRuntimeError.invalidArguments("Unknown field `\(name)` for tool `\(definition.name)`.")
+            }
+            guard matches(value, type: field.type) else {
+                throw ToolRuntimeError.invalidArguments(
+                    "Field `\(name)` must have type `\(field.type.rawValue)`."
+                )
+            }
+        }
+    }
+
+    private func matches(_ value: ToolValue, type: ToolValueType) -> Bool {
+        switch (value, type) {
+        case (.string, .string), (.integer, .integer), (.number, .number), (.boolean, .boolean),
+             (.array, .array), (.object, .object):
+            return true
+        default:
+            return false
+        }
     }
 
     private func audit(
