@@ -38,8 +38,10 @@ final class MemoryRuntimeSecurityTests: XCTestCase {
 
         // Tool availability and model prose are not authorization. No typed
         // memory operation occurred, so the durable memory store must be empty.
-        XCTAssertTrue(try await fixture.store.listActive().isEmpty)
-        XCTAssertNil(try await fixture.service.load(key: "profile.favorite.color"))
+        let active = try await fixture.store.listActive()
+        let favoriteColor = try await fixture.service.load(key: "profile.favorite.color")
+        XCTAssertTrue(active.isEmpty)
+        XCTAssertNil(favoriteColor)
     }
 
     func testForgottenMemoryIsAbsentFromTheNextRuntimeTurnContext() async throws {
@@ -86,8 +88,9 @@ final class MemoryRuntimeSecurityTests: XCTestCase {
             key: created.record.key,
             expectedRevision: created.record.revision
         )
+        let afterForget = try await fixture.service.load(key: created.record.key)
         XCTAssertEqual(forgotten?.id, created.record.id)
-        XCTAssertNil(try await fixture.service.load(key: created.record.key))
+        XCTAssertNil(afterForget)
 
         // A new send must build a fresh context snapshot. It may not reuse a
         // stale prior-turn memory snapshot after explicit forget.
