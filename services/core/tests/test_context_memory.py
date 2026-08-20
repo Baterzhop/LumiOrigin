@@ -51,10 +51,29 @@ async def test_context_manager_compacts_old_history_by_token_budget(tmp_path):
     assert bundle.summary is not None
     assert "Compact summary" in bundle.summary
     assert len(bundle.messages) < 12
+    assert bundle.estimated_tokens <= 1_600
     assert bundle.summarized_through_message_id is not None
     persisted = store.get_summary(conversation_id)
     assert persisted is not None
     assert persisted["covered_through_message_id"] == bundle.summarized_through_message_id
+
+
+def test_context_manager_rejects_individually_oversized_turn(tmp_path):
+    db = Database(tmp_path / "lumi.sqlite3")
+    db.migrate()
+    manager = ConversationContextManager(
+        db,
+        MemoryStore(db),
+        ModelGateway(SummaryProvider()),
+        max_input_tokens=1_000,
+        recent_token_budget=500,
+        summary_target_tokens=128,
+    )
+    try:
+        manager.validate_current_message("x" * 5_000)
+        assert False, "expected message_exceeds_context_budget"
+    except ValueError as exc:
+        assert str(exc) == "message_exceeds_context_budget"
 
 
 async def test_runtime_surfaces_only_explicit_durable_memory_as_context(tmp_path):
