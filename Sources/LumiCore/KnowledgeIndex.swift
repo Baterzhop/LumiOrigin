@@ -1,6 +1,8 @@
 import Foundation
 
-public actor KnowledgeIndex {
+/// Small in-memory lexical retriever kept for tests/bootstrap data.
+/// Persistent document retrieval is provided by `SQLiteKnowledgeStore`.
+public actor KnowledgeIndex: KnowledgeRetrieving {
     private var documents: [KnowledgeDocument]
 
     public init(documents: [KnowledgeDocument] = []) {
@@ -23,12 +25,14 @@ public actor KnowledgeIndex {
         documents
     }
 
-    public func search(_ query: String, limit: Int = 4) -> [KnowledgeHit] {
+    public func search(_ query: String, limit: Int = 4) async -> [KnowledgeHit] {
         guard !documents.isEmpty else { return [] }
         let queryTokens = Self.tokenize(query)
         guard !queryTokens.isEmpty else { return [] }
 
-        let corpusTokens = documents.map { Self.tokenize($0.title + " " + $0.text + " " + $0.tags.joined(separator: " ")) }
+        let corpusTokens = documents.map {
+            Self.tokenize($0.title + " " + $0.text + " " + $0.tags.joined(separator: " "))
+        }
         let averageLength = Double(corpusTokens.reduce(0) { $0 + $1.count }) / Double(max(corpusTokens.count, 1))
         let n = Double(documents.count)
 
@@ -56,17 +60,9 @@ public actor KnowledgeIndex {
                 bm25 += idf * (tf * (k1 + 1.0)) / max(denominator, 1e-9)
             }
 
-            let querySet = Set(queryTokens)
-            let docSet = Set(tokens)
-            let overlap = Double(querySet.intersection(docSet).count) / Double(max(querySet.count, 1))
-
-            // Lightweight local hybrid: BM25 for exact relevance + token semantic overlap.
-            // A remote dense retriever can replace this component without changing LumiEngine.
-            let normalizedBM25 = bm25 / (1.0 + bm25)
-            let score = 0.72 * normalizedBM25 + 0.28 * overlap
-
-            if score > 0 {
-                hits.append(KnowledgeHit(document: documents[index], score: score))
+            let normalized = bm25 / (1.0 + bm25)
+            if normalized > 0 {
+                hits.append(KnowledgeHit(document: documents[index], score: normalized))
             }
         }
 
