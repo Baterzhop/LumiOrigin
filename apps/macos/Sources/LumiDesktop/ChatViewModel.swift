@@ -17,6 +17,11 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var documentCount = 0
     @Published private(set) var isImportingKnowledge = false
 
+    @Published private(set) var memories: [MemoryRecordDTO] = []
+    @Published private(set) var memoryStatus = "No durable memories"
+    @Published private(set) var memorySemanticEnabled = false
+    @Published private(set) var isUpdatingMemory = false
+
     @Published var agentGoal = ""
     @Published private(set) var agentTask: AgentTaskDTO?
     @Published private(set) var agentStatus = "No agent task"
@@ -44,8 +49,10 @@ final class ChatViewModel: ObservableObject {
             providerName = runtime.provider
             toolCount = runtime.tools?.count ?? 0
             toolWorkspace = runtime.tools?.workspace ?? "—"
+            memorySemanticEnabled = runtime.memory?.semanticEnabled ?? false
             status = health.ok && runtime.ok ? "Core ready" : "Core degraded"
             await refreshKnowledge()
+            await refreshMemories()
         } catch {
             status = "Core offline"
         }
@@ -58,6 +65,64 @@ final class ChatViewModel: ObservableObject {
             knowledgeStatus = documents.isEmpty ? "No documents loaded" : "\(documents.count) document(s) indexed"
         } catch {
             knowledgeStatus = "Knowledge unavailable"
+        }
+    }
+
+    func refreshMemories() async {
+        do {
+            memories = try await api.memories()
+            memoryStatus = memories.isEmpty
+                ? "No durable memories"
+                : "\(memories.count) approved memory item(s)"
+        } catch {
+            memoryStatus = "Memory unavailable"
+        }
+    }
+
+    func createMemory(content: String, title: String?, kind: String) {
+        let clean = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, !isUpdatingMemory else { return }
+        isUpdatingMemory = true
+        memoryStatus = "Saving approved memory…"
+        Task {
+            do {
+                _ = try await api.createMemory(content: clean, kind: kind, title: title)
+                await refreshMemories()
+            } catch {
+                memoryStatus = "Memory save failed: \(error.localizedDescription)"
+            }
+            isUpdatingMemory = false
+        }
+    }
+
+    func updateMemory(_ memory: MemoryRecordDTO, content: String, title: String?, kind: String) {
+        let clean = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, !isUpdatingMemory else { return }
+        isUpdatingMemory = true
+        memoryStatus = "Updating memory…"
+        Task {
+            do {
+                _ = try await api.updateMemory(memory.id, content: clean, kind: kind, title: title)
+                await refreshMemories()
+            } catch {
+                memoryStatus = "Memory update failed: \(error.localizedDescription)"
+            }
+            isUpdatingMemory = false
+        }
+    }
+
+    func deleteMemory(_ memoryID: String) {
+        guard !isUpdatingMemory else { return }
+        isUpdatingMemory = true
+        memoryStatus = "Deleting memory…"
+        Task {
+            do {
+                try await api.deleteMemory(memoryID)
+                await refreshMemories()
+            } catch {
+                memoryStatus = "Memory deletion failed: \(error.localizedDescription)"
+            }
+            isUpdatingMemory = false
         }
     }
 
@@ -219,10 +284,19 @@ final class ChatViewModel: ObservableObject {
         if let citations = event.citations, !citations.isEmpty {
             messages[index].citations = citations
         }
+        if let memories = event.memories, !memories.isEmpty {
+            messages[index].memories = memories
+        }
 
         switch event.type {
         case .started:
-            status = messages[index].citations.isEmpty ? "Generating" : "Generating with \(messages[index].citations.count) source(s)"
+            let evidence = messages[index].citations.count
+            let recalled = messages[index].memories.count
+            if evidence > 0 || recalled > 0 {
+                status = "Generating · \(evidence) source(s) · \(recalled) memory item(s)"
+            } else {
+                status = "Generating"
+            }
         case .delta:
             if let delta = event.delta { messages[index].content += delta }
             messages[index].provider = event.provider
