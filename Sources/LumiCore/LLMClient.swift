@@ -22,7 +22,7 @@ public protocol LLMClient: Sendable {
         messages: [ChatMessage],
         systemPrompt: String,
         profile: PromptProfile
-    ) async throws -> String
+    ) async throws -> ModelResponse
 }
 
 public struct OllamaClient: LLMClient, Sendable {
@@ -46,7 +46,7 @@ public struct OllamaClient: LLMClient, Sendable {
         messages: [ChatMessage],
         systemPrompt: String,
         profile: PromptProfile
-    ) async throws -> String {
+    ) async throws -> ModelResponse {
         struct WireMessage: Codable {
             let role: String
             let content: String
@@ -64,7 +64,11 @@ public struct OllamaClient: LLMClient, Sendable {
         }
         struct ResponseBody: Codable {
             struct ResponseMessage: Codable { let content: String }
+            let model: String?
             let message: ResponseMessage?
+            let done_reason: String?
+            let prompt_eval_count: Int?
+            let eval_count: Int?
         }
 
         let wireMessages = [WireMessage(role: "system", content: systemPrompt)] + messages.map {
@@ -87,14 +91,60 @@ public struct OllamaClient: LLMClient, Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(payload)
 
+        let startedAt = Date()
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw LLMError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else { throw LLMError.httpStatus(http.statusCode) }
+        let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
 
-        let decoded = try JSONDecoder().decode(ResponseBody.self, from: data)
+        guard let http = response as? HTTPURLResponse else {
+            throw LumiRuntimeError.invalidResponse
+        }
+        switch http.statusCode {
+        case 200..<300:
+            break
+        case 401, 403:
+            throw LumiRuntimeError.unauthorized
+        case 404:
+            throw LumiRuntimeError.modelUnavailable(model)
+        case 408:
+            throw LumiRuntimeError.timeout
+        case 429:
+            throw LumiRuntimeError.rateLimited
+        default:
+            throw LLMError.httpStatus(http.statusCode)
+        }
+
+        let decoded: ResponseBody
+        do {
+            decoded = try JSONDecoder().decode(ResponseBody.self, from: data)
+        } catch {
+            throw LumiRuntimeError.decodingFailure(error.localizedDescription)
+        }
+
         let content = decoded.message?.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !content.isEmpty else { throw LLMError.emptyResponse }
-        return content
+
+        let finishReason: ModelFinishReason
+        switch decoded.done_reason?.lowercased() {
+        case "stop": finishReason = .stop
+        case "length": finishReason = .length
+        case nil: finishReason = .unknown
+        default: finishReason = .unknown
+        }
+
+        return ModelResponse(
+            content: content,
+            runtime: RuntimeMetadata(
+                provider: .ollama,
+                model: decoded.model ?? model,
+                fallbackUsed: false,
+                latencyMs: latencyMs,
+                finishReason: finishReason,
+                usage: ModelUsage(
+                    inputTokens: decoded.prompt_eval_count,
+                    outputTokens: decoded.eval_count
+                )
+            )
+        )
     }
 }
 
@@ -105,12 +155,25 @@ public struct LocalFallbackClient: LLMClient, Sendable {
         messages: [ChatMessage],
         systemPrompt: String,
         profile: PromptProfile
-    ) async throws -> String {
+    ) async throws -> ModelResponse {
         let prompt = messages.last(where: { $0.role == .user })?.content ?? ""
+        let content: String
         if prompt.isEmpty {
-            return "Lumi is ready."
+            content = "Lumi is ready."
+        } else {
+            content = "Local model is unavailable. I received: \"\(prompt)\". Start Ollama or configure LUMI_OLLAMA_URL to enable generated answers."
         }
-        return "Local model is unavailable. I received: \"\(prompt)\". Start Ollama or configure LUMI_OLLAMA_URL to enable generated answers."
+
+        return ModelResponse(
+            content: content,
+            runtime: RuntimeMetadata(
+                provider: .localFallback,
+                model: "deterministic-fallback",
+                fallbackUsed: true,
+                latencyMs: 0,
+                finishReason: .stop
+            )
+        )
     }
 }
 
@@ -127,9 +190,11 @@ public struct ResilientLLMClient: LLMClient, Sendable {
         messages: [ChatMessage],
         systemPrompt: String,
         profile: PromptProfile
-    ) async throws -> String {
+    ) async throws -> ModelResponse {
         do {
             return try await primary.complete(messages: messages, systemPrompt: systemPrompt, profile: profile)
+        } catch is CancellationError {
+            throw LumiRuntimeError.cancelled
         } catch {
             return try await fallback.complete(messages: messages, systemPrompt: systemPrompt, profile: profile)
         }
