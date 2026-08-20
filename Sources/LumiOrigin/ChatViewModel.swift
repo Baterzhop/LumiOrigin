@@ -13,6 +13,7 @@ final class ChatViewModel: ObservableObject {
     @Published var lastIntent: LumiIntent = .chat
     @Published var contextHits: [KnowledgeHit] = []
     @Published var contextBudget: ContextBudgetReport?
+    @Published var citationReport: CitationReport = .empty
     @Published var status = "Local-first"
     @Published var runtime: RuntimeMetadata?
     @Published var lastError: String?
@@ -33,6 +34,7 @@ final class ChatViewModel: ObservableObject {
         input = ""
         streamingText = ""
         lastError = nil
+        citationReport = .empty
         isSending = true
         status = "Generating"
         messages.append(ChatMessage(role: .user, content: text))
@@ -56,6 +58,7 @@ final class ChatViewModel: ObservableObject {
                         lastIntent = reply.intent
                         contextHits = reply.context
                         contextBudget = reply.contextBudget
+                        citationReport = reply.citationReport
                         runtime = reply.runtime
                         applyRuntimeStatus(reply.runtime)
                         await applyPersistenceStatusIfNeeded()
@@ -94,6 +97,7 @@ final class ChatViewModel: ObservableObject {
             messages = []
             contextHits = []
             contextBudget = nil
+            citationReport = .empty
             streamingText = ""
             lastIntent = .chat
             runtime = nil
