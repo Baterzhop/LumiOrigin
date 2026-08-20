@@ -8,6 +8,7 @@ public actor LumiEngine {
     public let reflections: ReflectionJournal
     public let knowledge: any KnowledgeRetrieving
     public let toolRuntime: ToolRuntime?
+    public let agentRuntime: AgentRuntime?
     public let conversationID: UUID
 
     private let classifier: any RequestClassifying
@@ -32,6 +33,7 @@ public actor LumiEngine {
         knowledge: any KnowledgeRetrieving = KnowledgeIndex(documents: LumiEngine.bootstrapKnowledge),
         conversationStore: any ConversationStore = InMemoryConversationStore(),
         toolRuntime: ToolRuntime? = nil,
+        agentRuntime: AgentRuntime? = nil,
         conversationID: UUID = LumiEngine.defaultConversationID,
         contextManager: ContextBudgetManager = ContextBudgetManager(),
         citationAssembler: CitationAssembler = CitationAssembler()
@@ -46,6 +48,7 @@ public actor LumiEngine {
         self.knowledge = knowledge
         self.conversationStore = conversationStore
         self.toolRuntime = toolRuntime
+        self.agentRuntime = agentRuntime
         self.conversationID = conversationID
         self.contextManager = contextManager
         self.citationAssembler = citationAssembler
@@ -188,7 +191,7 @@ public actor LumiEngine {
     }
 
     /// Clears only the durable conversation transcript and bounded working buffer.
-    /// Long-term memory has an independent lifecycle and must be deleted explicitly.
+    /// Long-term memory and agent-run history have independent lifecycles.
     public func clearConversation() async {
         await memory.clear()
         await reflections.clear()
@@ -212,7 +215,7 @@ public actor LumiEngine {
     }
 
     /// Executes one already-constructed tool call through the permission, sandbox and audit layers.
-    /// Normal chat generation does not call this method automatically in ToolRuntime V1.
+    /// Normal chat generation does not call this method automatically.
     public func executeTool(
         _ call: ToolCall,
         confirmation: ToolConfirmation? = nil
@@ -236,6 +239,54 @@ public actor LumiEngine {
     public func toolAuditIssue() async -> String? {
         guard let toolRuntime else { return nil }
         return await toolRuntime.auditIssue()
+    }
+
+    /// Explicitly starts the bounded agent state machine. `respond()` remains non-agentic.
+    public func startAgent(
+        goal: String,
+        budget: AgentBudget = AgentBudget()
+    ) async throws -> AgentRun {
+        guard let agentRuntime else {
+            throw AgentRuntimeError.invalidState("AgentRuntime is not configured for this LumiEngine.")
+        }
+        let cleanGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let classification = classifier.classify(LumiRequest(input: cleanGoal))
+        return try await agentRuntime.start(
+            goal: cleanGoal,
+            classification: classification,
+            budget: budget
+        )
+    }
+
+    public func resumeAgent(
+        runID: UUID,
+        confirmation: ToolConfirmation
+    ) async throws -> AgentRun {
+        guard let agentRuntime else {
+            throw AgentRuntimeError.invalidState("AgentRuntime is not configured for this LumiEngine.")
+        }
+        return try await agentRuntime.resume(runID: runID, confirmation: confirmation)
+    }
+
+    public func cancelAgent(runID: UUID) async throws -> AgentRun {
+        guard let agentRuntime else {
+            throw AgentRuntimeError.invalidState("AgentRuntime is not configured for this LumiEngine.")
+        }
+        return try await agentRuntime.cancel(runID: runID)
+    }
+
+    public func agentRun(id: UUID) async throws -> AgentRun? {
+        guard let agentRuntime else {
+            throw AgentRuntimeError.invalidState("AgentRuntime is not configured for this LumiEngine.")
+        }
+        return try await agentRuntime.load(runID: id)
+    }
+
+    public func recentAgentRuns(limit: Int = 20) async throws -> [AgentRun] {
+        guard let agentRuntime else {
+            throw AgentRuntimeError.invalidState("AgentRuntime is not configured for this LumiEngine.")
+        }
+        return try await agentRuntime.recentRuns(limit: limit)
     }
 
     @discardableResult
@@ -399,7 +450,7 @@ public actor LumiEngine {
                 notices.append("External tools/actions are not configured in this runtime.")
             } else {
                 notices.append(
-                    "A sandboxed ToolRuntime exists, but normal chat generation cannot invoke tools automatically in this phase. Do not claim that an external action or file operation was executed unless an actual ToolResult is supplied by the runtime."
+                    "A sandboxed ToolRuntime exists, but normal chat generation cannot invoke tools automatically in this phase. Do not claim that an external action or file operation was executed unless an actual ToolResult is supplied by the runtime. AgentRuntime, when configured, must be started explicitly."
                 )
             }
         }
@@ -472,7 +523,7 @@ public actor LumiEngine {
         KnowledgeDocument(
             id: "lumi-architecture",
             title: "Lumi V4 architecture",
-            text: "Lumi V4 separates orchestration, durable conversation persistence, bounded working memory, token-budgeted context packing, retrieval, model access, and the SwiftUI presentation layer. Reflection is telemetry, not consciousness.",
+            text: "Lumi V4 separates orchestration, durable conversation persistence, bounded working memory, token-budgeted context packing, retrieval, model access, tool execution, and the SwiftUI presentation layer. Reflection is telemetry, not consciousness.",
             tags: ["lumi", "architecture", "v4"]
         ),
         KnowledgeDocument(
@@ -489,9 +540,9 @@ public actor LumiEngine {
         ),
         KnowledgeDocument(
             id: "lumi-tools",
-            title: "ToolRuntime security boundary",
-            text: "ToolRuntime V1 supports typed, audited and sandboxed read-only tools. Write and destructive tools remain disabled, and normal chat generation does not automatically execute tools until the agent runtime is introduced.",
-            tags: ["tools", "security", "v4"]
+            title: "ToolRuntime and AgentRuntime security boundary",
+            text: "ToolRuntime supports typed, audited and sandboxed read-only tools. AgentRuntime can plan, execute, observe and replan only through ToolRuntime, with bounded budgets and persisted checkpoints. Normal chat does not automatically execute actions.",
+            tags: ["tools", "agent", "security", "v4"]
         )
     ]
 }
