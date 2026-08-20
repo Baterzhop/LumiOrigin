@@ -43,9 +43,15 @@ struct DeveloperAgentView: View {
                     LabeledContent("Enabled", value: status.enabled ? "yes" : "no")
                     LabeledContent("Repository", value: status.repositoryOK ? "ready" : "not ready")
                     LabeledContent("Clean", value: status.clean ? "yes" : "no")
+                    LabeledContent("Local checks", value: status.localChecksEnabled ? "enabled" : "disabled")
                     LabeledContent("PR publisher", value: status.publisherConfigured ? "configured" : "not configured")
                 }
                 .font(.caption)
+                if !status.localChecksEnabled {
+                    Text("Local validation is disabled by default because tests execute code from the developer checkout. If a proposal requires checks, Lumi will stop at validation_incomplete and will not allow publishing.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 if let root = status.repositoryRoot {
                     Text(root)
                         .font(.caption2.monospaced())
@@ -140,14 +146,19 @@ struct DeveloperAgentView: View {
                 }
 
                 if !session.checks.isEmpty {
-                    GroupBox("Checks that will run after plan approval") {
+                    GroupBox("Required validation") {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(session.checks, id: \.self) { check in
                                 Text("• \(check)").font(.caption.monospaced())
                             }
-                            Text("These are fixed allow-listed check profiles; the model cannot supply an arbitrary shell command.")
+                            Text("These are fixed allow-listed profiles; the model cannot supply an arbitrary shell command.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
+                            if model.status?.localChecksEnabled != true {
+                                Text("Local checks are currently disabled. Approving the plan may apply the change on an isolated branch, but publishing will remain blocked until required checks can run successfully.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -160,10 +171,12 @@ struct DeveloperAgentView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("\(result.name): \(result.status)")
                                         .font(.caption.weight(.semibold))
-                                    Text(result.command.joined(separator: " "))
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(.secondary)
-                                    if result.status == "failed" && !result.output.isEmpty {
+                                    if !result.command.isEmpty {
+                                        Text(result.command.joined(separator: " "))
+                                            .font(.caption2.monospaced())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    if result.status != "passed" && !result.output.isEmpty {
                                         Text(result.output)
                                             .font(.caption2.monospaced())
                                             .textSelection(.enabled)
@@ -211,7 +224,7 @@ struct DeveloperAgentView: View {
             if session.status == "awaiting_plan_approval" {
                 Button("Deny", role: .destructive) { model.denyPlan() }
                     .disabled(model.isWorking)
-                Button("Approve exact plan + run checks") { model.approvePlan() }
+                Button("Approve exact plan") { model.approvePlan() }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isWorking)
             } else if ["ready_to_publish", "publish_failed"].contains(session.status) {
