@@ -55,23 +55,22 @@ public actor AgentRuntime {
             conversation.messages.append(userMessage)
             conversation.updatedAt = Date()
 
-            // User input is durable before model, retrieval or tool execution.
             phase = .persistingUserMessage
             try await store.saveConversation(conversation)
 
-            let groundedContext: GroundedContext?
+            let contextSnapshot: ModelContextSnapshot?
             if let contextProvider {
-                phase = .retrievingKnowledge
-                groundedContext = try await contextProvider.context(for: normalized)
+                phase = .retrievingContext
+                contextSnapshot = try await contextProvider.context(for: normalized)
             } else {
-                groundedContext = nil
+                contextSnapshot = nil
             }
 
             return try await continueRun(
                 conversation: conversation,
                 conversationID: conversationID,
                 completedToolSteps: 0,
-                groundedContext: groundedContext
+                contextSnapshot: contextSnapshot
             )
         } catch {
             phase = .failed
@@ -106,7 +105,7 @@ public actor AgentRuntime {
                     call: pending.call,
                     request: changedRequest,
                     completedToolSteps: pending.completedToolSteps,
-                    groundedContext: pending.groundedContext
+                    contextSnapshot: pending.contextSnapshot
                 )
 
             case .success(let success):
@@ -119,7 +118,7 @@ public actor AgentRuntime {
                     conversation: conversation,
                     conversationID: pending.conversationID,
                     completedToolSteps: pending.completedToolSteps + 1,
-                    groundedContext: pending.groundedContext
+                    contextSnapshot: pending.contextSnapshot
                 )
             }
         } catch {
@@ -146,7 +145,7 @@ public actor AgentRuntime {
                 conversation: conversation,
                 conversationID: pending.conversationID,
                 completedToolSteps: pending.completedToolSteps + 1,
-                groundedContext: pending.groundedContext
+                contextSnapshot: pending.contextSnapshot
             )
         } catch {
             phase = .failed
@@ -167,7 +166,7 @@ public actor AgentRuntime {
         conversation: Conversation,
         conversationID: UUID,
         completedToolSteps: Int,
-        groundedContext: GroundedContext?
+        contextSnapshot: ModelContextSnapshot?
     ) async throws -> RuntimeOutcome {
         phase = .waitingForModel
 
@@ -182,7 +181,7 @@ public actor AgentRuntime {
             to: ModelRequest(
                 messages: conversation.messages,
                 availableTools: tools,
-                groundedContext: groundedContext
+                contextSnapshot: contextSnapshot
             )
         )
 
@@ -193,11 +192,9 @@ public actor AgentRuntime {
                 throw AgentRuntimeError.emptyFinalResponse
             }
 
-            // Validate every [K#] marker before making the response durable.
-            // A hallucinated citation can therefore never be surfaced as trusted.
             let citations = try GroundedCitationResolver().resolve(
                 in: normalized,
-                context: groundedContext
+                context: contextSnapshot?.groundedKnowledge
             )
 
             var updated = conversation
@@ -235,7 +232,7 @@ public actor AgentRuntime {
                     call: call,
                     request: request,
                     completedToolSteps: completedToolSteps,
-                    groundedContext: groundedContext
+                    contextSnapshot: contextSnapshot
                 )
 
             case .success(let success):
@@ -248,7 +245,7 @@ public actor AgentRuntime {
                     conversation: updated,
                     conversationID: conversationID,
                     completedToolSteps: completedToolSteps + 1,
-                    groundedContext: groundedContext
+                    contextSnapshot: contextSnapshot
                 )
             }
         }
@@ -260,7 +257,7 @@ public actor AgentRuntime {
         call: ToolCall,
         request: PermissionRequest,
         completedToolSteps: Int,
-        groundedContext: GroundedContext?
+        contextSnapshot: ModelContextSnapshot?
     ) -> RuntimeOutcome {
         let pendingID = UUID()
         let approval = PendingToolApproval(
@@ -277,7 +274,7 @@ public actor AgentRuntime {
             conversation: conversation,
             call: call,
             completedToolSteps: completedToolSteps,
-            groundedContext: groundedContext
+            contextSnapshot: contextSnapshot
         )
         phase = .awaitingPermission
         return .permissionRequired(approval)
@@ -294,7 +291,7 @@ public actor AgentRuntime {
             providerCallID: call.providerCallID,
             tool: success.descriptor.name,
             version: success.descriptor.version,
-            arguments: try decodeToolArguments(call.arguments),
+            arguments: try await durableHistoryArguments(for: call),
             data: success.data,
             warnings: success.warnings,
             metadata: success.metadata,
@@ -314,13 +311,24 @@ public actor AgentRuntime {
             providerCallID: call.providerCallID,
             tool: call.name,
             version: call.version,
-            arguments: try decodeToolArguments(call.arguments),
+            arguments: try await durableHistoryArguments(for: call),
             data: nil,
             warnings: [],
             metadata: [:],
             detail: "User denied \(request.capability.rawValue) for \(request.resource.identifier)."
         )
         return try await appendToolEvent(event, to: conversation)
+    }
+
+    private func durableHistoryArguments(for call: ToolCall) async throws -> JSONValue {
+        if let toolRuntime {
+            do {
+                return try await toolRuntime.historyArguments(for: call)
+            } catch {
+                throw AgentRuntimeError.toolArgumentsEncodingFailed
+            }
+        }
+        return try decodeToolArguments(call.arguments)
     }
 
     private func appendToolEvent(
@@ -366,7 +374,7 @@ private struct PendingExecution: Sendable {
     let conversation: Conversation
     let call: ToolCall
     let completedToolSteps: Int
-    let groundedContext: GroundedContext?
+    let contextSnapshot: ModelContextSnapshot?
 }
 
 public enum AgentRuntimeError: Error, CustomStringConvertible, Sendable {

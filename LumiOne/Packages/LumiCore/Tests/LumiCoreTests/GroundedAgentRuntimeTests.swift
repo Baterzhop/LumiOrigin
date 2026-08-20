@@ -172,14 +172,14 @@ final class GroundedAgentRuntimeTests: XCTestCase {
 }
 
 private actor CountingContextProvider: ModelContextProvider {
-    private let value: GroundedContext
+    private let value: ModelContextSnapshot
     private var count = 0
 
     init(context: GroundedContext) {
-        self.value = context
+        value = ModelContextSnapshot(groundedKnowledge: context)
     }
 
-    func context(for query: String) async throws -> GroundedContext? {
+    func context(for query: String) async throws -> ModelContextSnapshot? {
         count += 1
         return value
     }

@@ -12,11 +12,14 @@ final class LumiAppModel: ObservableObject {
     @Published var status = "Starting…"
     @Published var lastError: String?
     @Published var pendingApproval: PendingToolApproval?
+    @Published var pendingMemoryExisting: UserMemoryRecord?
     @Published var selectedFiles: [UserFileDescriptor] = []
     @Published var knowledgeDocuments: [KnowledgeDocument] = []
+    @Published var memories: [UserMemoryRecord] = []
     @Published var lastCitations: [KnowledgeCitation] = []
     @Published var indexingResourceID: UserFileResourceID?
     @Published var isKnowledgeAvailable = false
+    @Published var isMemoryAvailable = false
     @Published var isSafeMode = false
     @Published var isSending = false
 
@@ -25,6 +28,8 @@ final class LumiAppModel: ObservableObject {
     private var fileCatalog: SecurityScopedFileCatalog?
     private var knowledgeStore: SQLiteKnowledgeStore?
     private var knowledgeEngine: KnowledgeIngestionEngine?
+    private var memoryStore: SQLiteMemoryStore?
+    private var memoryService: MemoryService?
     private let conversationID: UUID
 
     init() {
@@ -202,28 +207,137 @@ final class LumiAppModel: ObservableObject {
         }
     }
 
+    /// Explicit UI edit initiated by the user. This does not route through the
+    /// model permission flow because the user is directly editing the memory.
+    /// Optimistic revision matching still prevents stale UI from overwriting a
+    /// newer value.
+    func updateMemory(_ record: UserMemoryRecord, value: String) {
+        guard
+            !isSafeMode,
+            !isSending,
+            pendingApproval == nil,
+            let memoryService
+        else { return }
+
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+
+        isSending = true
+        lastError = nil
+        status = "Updating memory…"
+        Task {
+            defer { isSending = false }
+            do {
+                _ = try await memoryService.remember(
+                    key: record.key,
+                    kind: record.kind,
+                    value: normalized,
+                    confidence: record.confidence,
+                    provenance: MemoryProvenance(
+                        sourceKind: .manualUserEntry,
+                        note: "Edited directly in Lumi Memory UI"
+                    ),
+                    expectedRevision: record.revision
+                )
+                await refreshMemories()
+                status = "Memory updated"
+            } catch {
+                status = "Memory update failed"
+                lastError = String(describing: error)
+                await refreshMemories()
+            }
+        }
+    }
+
+    /// Explicit user-initiated hard forget. SQLiteMemoryStore cascades removal of
+    /// revision payloads so deleted personal content is not retained secretly.
+    func forgetMemory(_ record: UserMemoryRecord) {
+        guard
+            !isSafeMode,
+            !isSending,
+            pendingApproval == nil,
+            let memoryService
+        else { return }
+
+        isSending = true
+        lastError = nil
+        status = "Forgetting memory…"
+        Task {
+            defer { isSending = false }
+            do {
+                _ = try await memoryService.forget(
+                    key: record.key,
+                    expectedRevision: record.revision
+                )
+                await refreshMemories()
+                status = "Memory forgotten"
+            } catch {
+                status = "Memory deletion failed"
+                lastError = String(describing: error)
+                await refreshMemories()
+            }
+        }
+    }
+
     private func apply(_ outcome: RuntimeOutcome) {
         switch outcome {
         case .completed(let response):
             pendingApproval = nil
+            pendingMemoryExisting = nil
             messages = response.conversation.messages
             lastCitations = response.citations
             status = "Ready"
+            if isMemoryAvailable {
+                Task { await refreshMemories() }
+            }
 
         case .permissionRequired(let pending):
             pendingApproval = pending
+            pendingMemoryExisting = nil
             messages = pending.conversation.messages
             status = "Permission required"
+            loadPendingMemoryState(for: pending)
+        }
+    }
+
+    private func loadPendingMemoryState(for pending: PendingToolApproval) {
+        guard
+            pending.permission.resource.kind == .userMemory,
+            let memoryService
+        else { return }
+
+        let pendingID = pending.id
+        let key = pending.permission.resource.identifier
+        Task {
+            let existing = try? await memoryService.load(key: key)
+            guard pendingApproval?.id == pendingID else { return }
+            pendingMemoryExisting = existing
         }
     }
 
     private func handleRuntimeError(_ error: Error, runtime: AgentRuntime) async {
         lastError = String(describing: error)
         lastCitations = []
+        pendingMemoryExisting = nil
         status = "Runtime error"
 
         if let restored = try? await runtime.loadConversation(id: conversationID) {
             messages = restored.messages
+        }
+        if isMemoryAvailable {
+            await refreshMemories()
+        }
+    }
+
+    private func refreshMemories() async {
+        guard let memoryService else {
+            memories = []
+            return
+        }
+        do {
+            memories = try await memoryService.listActive()
+        } catch {
+            lastError = "Memory refresh failed: \(error)"
         }
     }
 
@@ -256,6 +370,23 @@ final class LumiAppModel: ObservableObject {
                 knowledgeStore = nil
                 isKnowledgeAvailable = false
                 lastError = "Knowledge storage is disabled: \(error)"
+            }
+
+            do {
+                let openedMemoryStore = try SQLiteMemoryStore(
+                    url: root.appendingPathComponent("memory.sqlite3")
+                )
+                memoryStore = openedMemoryStore
+                let openedMemoryService = MemoryService(store: openedMemoryStore)
+                memoryService = openedMemoryService
+                memories = try await openedMemoryService.listActive()
+                isMemoryAvailable = true
+            } catch {
+                memoryStore = nil
+                memoryService = nil
+                memories = []
+                isMemoryAvailable = false
+                lastError = "Long-term memory is disabled: \(error)"
             }
 
             let broker: any UserFileAccessBroker
@@ -302,15 +433,35 @@ final class LumiAppModel: ObservableObject {
         broker: any UserFileAccessBroker
     ) throws {
         let permissions = PermissionEngine()
-        let registry = try ToolRegistry(tools: [
+        var registeredTools: [AnyTool] = [
             AnyTool(ReadTextFileTool(broker: broker))
-        ])
+        ]
+        if let memoryService {
+            registeredTools.append(AnyTool(RememberMemoryTool(service: memoryService)))
+            registeredTools.append(AnyTool(ForgetMemoryTool(service: memoryService)))
+        }
+        let registry = try ToolRegistry(tools: registeredTools)
         let tools = ToolRuntime(registry: registry, permissions: permissions)
 
-        let contextProvider: (any ModelContextProvider)?
+        var knowledgeContextProvider: (any ModelContextProvider)?
         if let knowledgeStore {
-            contextProvider = KnowledgeModelContextProvider(
+            knowledgeContextProvider = KnowledgeModelContextProvider(
                 retriever: LexicalKnowledgeRetriever(store: knowledgeStore)
+            )
+        }
+
+        var memoryContextProvider: (any ModelContextProvider)?
+        if let memoryStore {
+            memoryContextProvider = MemoryModelContextProvider(
+                retriever: LexicalMemoryRetriever(store: memoryStore)
+            )
+        }
+
+        let contextProvider: (any ModelContextProvider)?
+        if knowledgeContextProvider != nil || memoryContextProvider != nil {
+            contextProvider = CompositeModelContextProvider(
+                knowledgeProvider: knowledgeContextProvider,
+                memoryProvider: memoryContextProvider
             )
         } else {
             contextProvider = nil
@@ -335,6 +486,7 @@ final class LumiAppModel: ObservableObject {
             contextProvider: contextProvider
         )
         pendingApproval = nil
+        pendingMemoryExisting = nil
     }
 
     private func makeSystemPrompt() -> String {
@@ -342,6 +494,7 @@ final class LumiAppModel: ObservableObject {
         You are Lumi, a precise local personal AI assistant.
         User-file access is capability-based. Never invent filesystem paths or resource IDs.
         Use file.readText only with a resourceID explicitly listed below.
+        Persistent user memory is explicit and user-controlled. Use memory.remember or memory.forget only when the user clearly asks to persist, replace, or forget information. Never claim a memory changed unless the corresponding tool succeeds. Do not automatically extract or store every chat detail.
         """
 
         if selectedFiles.isEmpty {
@@ -359,9 +512,14 @@ final class LumiAppModel: ObservableObject {
     private func enterSafeMode(_ reason: String) {
         runtime = nil
         pendingApproval = nil
+        pendingMemoryExisting = nil
         knowledgeEngine = nil
+        memoryStore = nil
+        memoryService = nil
+        memories = []
         lastCitations = []
         isKnowledgeAvailable = false
+        isMemoryAvailable = false
         isSafeMode = true
         status = "SAFE MODE"
         lastError = "Persistent runtime is unavailable. Writes and actions are disabled. \(reason)"
