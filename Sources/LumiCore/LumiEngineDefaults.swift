@@ -1,9 +1,9 @@
 import Foundation
 
 public extension LumiEngine {
-    /// Production-style local default: conversation history, long-term memory, sparse knowledge and
-    /// vectors share one SQLite file through separate typed stores. Dense retrieval uses local Ollama
-    /// embeddings when available and degrades to FTS5 when the embedding model is offline.
+    /// Production-style local default: conversation history, long-term memory, sparse knowledge,
+    /// vectors and tool audit events share one SQLite file through separate typed stores.
+    /// ToolRuntime V1 exposes only sandboxed read-only workspace tools.
     static func persistentDefault() -> LumiEngine {
         let databaseURL = SQLiteConversationStore.defaultDatabaseURL()
         let sparse = SQLiteKnowledgeStore(databaseURL: databaseURL)
@@ -18,10 +18,43 @@ public extension LumiEngine {
             writePolicy: .explicitOnly
         )
 
+        let workspaceURL = defaultWorkspaceURL(databaseURL: databaseURL)
+        try? FileManager.default.createDirectory(
+            at: workspaceURL,
+            withIntermediateDirectories: true
+        )
+        let sandbox = WorkspaceSandbox(rootURL: workspaceURL)
+        let registry = ToolRegistry(tools: [
+            ListWorkspaceFilesTool(sandbox: sandbox),
+            ReadWorkspaceTextFileTool(sandbox: sandbox)
+        ])
+        let toolRuntime = ToolRuntime(
+            registry: registry,
+            policy: ToolPermissionPolicy(
+                allowLowRiskReadOnlyWithoutConfirmation: true,
+                writeToolsEnabled: false
+            ),
+            auditStore: SQLiteToolAuditStore(databaseURL: databaseURL)
+        )
+
         return LumiEngine(
             longTermMemory: memoryRuntime,
             knowledge: hybrid,
-            conversationStore: SQLiteConversationStore(databaseURL: databaseURL)
+            conversationStore: SQLiteConversationStore(databaseURL: databaseURL),
+            toolRuntime: toolRuntime
         )
+    }
+
+    static func defaultWorkspaceURL(
+        databaseURL: URL = SQLiteConversationStore.defaultDatabaseURL()
+    ) -> URL {
+        if let configured = ProcessInfo.processInfo.environment["LUMI_WORKSPACE"],
+           !configured.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return URL(fileURLWithPath: configured, isDirectory: true)
+        }
+
+        return databaseURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("Workspace", isDirectory: true)
     }
 }
