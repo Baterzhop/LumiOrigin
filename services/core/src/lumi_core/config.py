@@ -25,6 +25,10 @@ class Settings:
     max_upload_bytes: int
     tool_workspace_root: Path
     tool_max_read_bytes: int
+    context_max_input_tokens: int
+    context_recent_tokens: int
+    context_summary_tokens: int
+    memory_recall_k: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -43,4 +47,8 @@ class Settings:
             max_upload_bytes=int(os.getenv("LUMI_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))),
             tool_workspace_root=workspace,
             tool_max_read_bytes=int(os.getenv("LUMI_TOOL_MAX_READ_BYTES", str(512 * 1024))),
+            context_max_input_tokens=int(os.getenv("LUMI_CONTEXT_MAX_INPUT_TOKENS", "6000")),
+            context_recent_tokens=int(os.getenv("LUMI_CONTEXT_RECENT_TOKENS", "3500")),
+            context_summary_tokens=int(os.getenv("LUMI_CONTEXT_SUMMARY_TOKENS", "800")),
+            memory_recall_k=int(os.getenv("LUMI_MEMORY_RECALL_K", "4")),
         )
