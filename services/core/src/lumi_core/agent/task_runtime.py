@@ -1,26 +1,21 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any
 
 from lumi_core.storage.database import Database
 from lumi_core.tools.policy import PolicyEngine
 from lumi_core.tools.registry import ToolExecutionError, ToolRegistry
 
-from .planner import PlannerDecision, TaskPlanner
+from .planner import TaskPlanner
 
 
 TERMINAL_TASK_STATES = {"completed", "failed", "denied", "budget_exceeded"}
 
 
 class TaskRuntime:
-    def __init__(
-        self,
-        database: Database,
-        registry: ToolRegistry,
-        policy: PolicyEngine,
-        planner: TaskPlanner,
-    ):
+    def __init__(self, database: Database, registry: ToolRegistry, policy: PolicyEngine, planner: TaskPlanner):
         self.database = database
         self.registry = registry
         self.policy = policy
@@ -163,7 +158,14 @@ class TaskRuntime:
         if task is None:
             raise ValueError("task_not_found")
         result = dict(task)
-        result["tool_calls"] = self.database.list_tool_calls(task_id)
+        calls = self.database.list_tool_calls(task_id)
+        for item in calls:
+            item["arguments_preview"] = json.dumps(item.get("arguments") or {}, ensure_ascii=False, sort_keys=True)[:2_000]
+            if item.get("result") is not None:
+                item["result_preview"] = json.dumps(item["result"], ensure_ascii=False, sort_keys=True)[:2_000]
+            else:
+                item["result_preview"] = None
+        result["tool_calls"] = calls
         return result
 
     def _observations(self, task_id: str) -> list[dict[str, Any]]:
