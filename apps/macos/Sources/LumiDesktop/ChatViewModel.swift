@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import LumiClientCore
 
 @MainActor
 final class ChatViewModel: ObservableObject {
@@ -112,11 +113,7 @@ final class ChatViewModel: ObservableObject {
             }
             messages[index].provider = event.provider
             messages[index].model = event.model
-            if event.fallback == true {
-                status = "Fallback mode"
-            } else {
-                status = "Generating"
-            }
+            status = event.fallback == true ? "Fallback mode" : "Generating"
         case .completed:
             if messages[index].content.isEmpty, let content = event.content {
                 messages[index].content = content

@@ -7,9 +7,12 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
+        .library(name: "LumiClientCore", targets: ["LumiClientCore"]),
         .executable(name: "LumiDesktop", targets: ["LumiDesktop"])
     ],
     targets: [
-        .executableTarget(name: "LumiDesktop")
+        .target(name: "LumiClientCore"),
+        .executableTarget(name: "LumiDesktop", dependencies: ["LumiClientCore"]),
+        .testTarget(name: "LumiClientCoreTests", dependencies: ["LumiClientCore"])
     ]
 )

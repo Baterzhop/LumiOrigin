@@ -1,6 +1,6 @@
 import Foundation
 
-struct LumiAPIClient: Sendable {
+public struct LumiAPIClient: Sendable {
     enum ClientError: LocalizedError {
         case invalidResponse
         case httpStatus(Int)
@@ -18,25 +18,25 @@ struct LumiAPIClient: Sendable {
         }
     }
 
-    let baseURL: URL
+    public let baseURL: URL
 
-    init(baseURL: URL = URL(string: "http://127.0.0.1:8790")!) {
+    public init(baseURL: URL = URL(string: "http://127.0.0.1:8790")!) {
         self.baseURL = baseURL
     }
 
-    func health() async throws -> HealthResponse {
+    public func health() async throws -> HealthResponse {
         let (data, response) = try await URLSession.shared.data(from: endpoint("health"))
         try validate(response)
         return try JSONDecoder().decode(HealthResponse.self, from: data)
     }
 
-    func runtimeStatus() async throws -> RuntimeStatusResponse {
+    public func runtimeStatus() async throws -> RuntimeStatusResponse {
         let (data, response) = try await URLSession.shared.data(from: endpoint("v1", "runtime"))
         try validate(response)
         return try JSONDecoder().decode(RuntimeStatusResponse.self, from: data)
     }
 
-    func streamChat(message: String, conversationID: String?) -> AsyncThrowingStream<ChatStreamEvent, Error> {
+    public func streamChat(message: String, conversationID: String?) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -89,7 +89,7 @@ struct LumiAPIClient: Sendable {
         }
     }
 
-    func cancelGeneration(_ generationID: String) async throws {
+    public func cancelGeneration(_ generationID: String) async throws {
         var request = URLRequest(url: endpoint("v1", "generations", generationID, "cancel"))
         request.httpMethod = "POST"
         let (_, response) = try await URLSession.shared.data(for: request)
