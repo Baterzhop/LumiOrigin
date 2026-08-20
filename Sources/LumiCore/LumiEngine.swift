@@ -9,6 +9,7 @@ public actor LumiEngine {
     public let knowledge: any KnowledgeRetrieving
     public let conversationID: UUID
 
+    private let classifier: any RequestClassifying
     private let router: IntentRouter
     private let prompts: PromptRegistry
     private let llm: any LLMClient
@@ -22,6 +23,7 @@ public actor LumiEngine {
     public init(
         llm: any LLMClient = ResilientLLMClient(primary: OllamaClient()),
         prompts: PromptRegistry = .bundled(),
+        classifier: any RequestClassifying = HeuristicRequestClassifier(),
         router: IntentRouter = IntentRouter(),
         memory: MemoryStore = MemoryStore(),
         longTermMemory: MemoryRuntime? = nil,
@@ -34,6 +36,7 @@ public actor LumiEngine {
     ) {
         self.llm = llm
         self.prompts = prompts
+        self.classifier = classifier
         self.router = router
         self.memory = memory
         self.longTermMemory = longTermMemory
@@ -75,6 +78,7 @@ public actor LumiEngine {
             completion: completion,
             input: prepared.cleanInput,
             intent: prepared.intent,
+            classification: prepared.classification,
             context: prepared.context,
             memories: prepared.memories,
             profile: prepared.profile,
@@ -97,6 +101,7 @@ public actor LumiEngine {
                 completion: contextOverflowResponse(prepared.contextBudget),
                 input: prepared.cleanInput,
                 intent: prepared.intent,
+                classification: prepared.classification,
                 context: prepared.context,
                 memories: prepared.memories,
                 profile: prepared.profile,
@@ -124,6 +129,7 @@ public actor LumiEngine {
                                 completion: completion,
                                 input: prepared.cleanInput,
                                 intent: prepared.intent,
+                                classification: prepared.classification,
                                 context: prepared.context,
                                 memories: prepared.memories,
                                 profile: prepared.profile,
@@ -139,7 +145,11 @@ public actor LumiEngine {
                 } catch is CancellationError {
                     continuation.finish(throwing: LumiRuntimeError.cancelled)
                 } catch {
-                    continuation.finish(throwing: Task.isCancelled ? LumiRuntimeError.cancelled : error)
+                    if Task.isCancelled {
+                        continuation.finish(throwing: LumiRuntimeError.cancelled)
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
                 }
             }
 
@@ -252,6 +262,7 @@ public actor LumiEngine {
     private struct PreparedRequest: Sendable {
         let cleanInput: String
         let intent: LumiIntent
+        let classification: RequestClassification
         let context: [KnowledgeHit]
         let memories: [MemoryHit]
         let profile: PromptProfile
@@ -263,23 +274,29 @@ public actor LumiEngine {
         await ensureConversationRestored()
 
         let cleanInput = request.input.trimmingCharacters(in: .whitespacesAndNewlines)
-        let intent = router.detect(cleanInput)
+        let classifiedRequest = LumiRequest(
+            id: request.id,
+            input: cleanInput,
+            profileOverride: request.profileOverride,
+            createdAt: request.createdAt
+        )
+        let classification = classifier.classify(classifiedRequest)
+        let intent = router.intent(for: classification)
         let selectedProfileName = request.profileOverride ?? profileName(for: intent)
-        let profile = prompts.profile(named: selectedProfileName)
+        let baseProfile = prompts.profile(named: selectedProfileName)
+        let profile = profileWithCapabilityBoundary(baseProfile, classification: classification)
 
         _ = await appendMessage(role: .user, content: cleanInput)
 
         let contextCandidates: [KnowledgeHit]
-        if intent == .knowledge || profile.name == "knowledge" {
+        if classification.capabilities.contains(.retrieval) || classification.capabilities.contains(.files) {
             contextCandidates = await knowledge.search(cleanInput, limit: 8)
         } else {
             contextCandidates = []
         }
 
         let memoryCandidates: [MemoryHit]
-        if cleanInput.isEmpty {
-            memoryCandidates = []
-        } else if let longTermMemory {
+        if classification.capabilities.contains(.memory), let longTermMemory, !cleanInput.isEmpty {
             memoryCandidates = await longTermMemory.relevant(to: cleanInput, limit: 8)
         } else {
             memoryCandidates = []
@@ -296,6 +313,7 @@ public actor LumiEngine {
         return PreparedRequest(
             cleanInput: cleanInput,
             intent: intent,
+            classification: classification,
             context: packed.knowledge,
             memories: packed.memories,
             profile: profile,
@@ -312,6 +330,7 @@ public actor LumiEngine {
         completion: ModelResponse,
         input: String,
         intent: LumiIntent,
+        classification: RequestClassification,
         context: [KnowledgeHit],
         memories: [MemoryHit],
         profile: PromptProfile,
@@ -324,12 +343,35 @@ public actor LumiEngine {
         return LumiReply(
             message: assistant,
             intent: intent,
+            classification: classification,
             context: context,
             memories: memories,
             profile: profile.name,
             runtime: completion.runtime,
             contextBudget: contextBudget,
             citationReport: citationReport
+        )
+    }
+
+    private func profileWithCapabilityBoundary(
+        _ profile: PromptProfile,
+        classification: RequestClassification
+    ) -> PromptProfile {
+        var unavailable: [String] = []
+        if classification.capabilities.contains(.tools) { unavailable.append("external tools/actions") }
+        if classification.capabilities.contains(.web) { unavailable.append("live web access") }
+        guard !unavailable.isEmpty else { return profile }
+
+        let notice = """
+        Runtime capability boundary: this request appears to require \(unavailable.joined(separator: " and ")), but those capabilities are not connected in this runtime yet. Do not claim that you executed an external action, changed a file/account, or accessed live/current data. Clearly distinguish what you can answer from available local context from what would require the missing capability.
+        """
+
+        return PromptProfile(
+            name: profile.name,
+            system: profile.system + "\n\n" + notice,
+            temperature: profile.temperature,
+            topP: profile.topP,
+            maxTokens: profile.maxTokens
         )
     }
 
