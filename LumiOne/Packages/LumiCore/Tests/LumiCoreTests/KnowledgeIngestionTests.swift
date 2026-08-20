@@ -176,7 +176,8 @@ final class KnowledgeIngestionTests: XCTestCase {
             XCTAssertEqual(error, .sourceIdentityMismatch)
         }
 
-        XCTAssertTrue(try await store.listDocuments().isEmpty)
+        let documents = try await store.listDocuments()
+        XCTAssertTrue(documents.isEmpty)
     }
 
     func testImageOnlyOrBlankExtractionProducesNoKnowledge() async throws {
@@ -202,7 +203,8 @@ final class KnowledgeIngestionTests: XCTestCase {
         } catch let error as KnowledgeIngestionError {
             XCTAssertEqual(error, .noChunks)
         }
-        XCTAssertTrue(try await store.listDocuments().isEmpty)
+        let documents = try await store.listDocuments()
+        XCTAssertTrue(documents.isEmpty)
     }
 
     func testSQLiteReplacementRollsBackIfChunkInsertFailsMidTransaction() async throws {
