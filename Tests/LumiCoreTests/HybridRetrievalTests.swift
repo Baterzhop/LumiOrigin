@@ -117,7 +117,8 @@ final class HybridRetrievalTests: XCTestCase {
         let hits = await hybrid.search("drain plug torque", limit: 5)
         XCTAssertEqual(hits.first?.document.sourceID, "torque-note")
         XCTAssertTrue(hits.first?.document.text.contains("20 Nm") == true)
-        XCTAssertNotNil(await hybrid.denseIssue())
+        let denseIssue = await hybrid.denseIssue()
+        XCTAssertNotNil(denseIssue)
     }
 
     func testFailedReembeddingRemovesStaleDenseVectors() async throws {
