@@ -37,6 +37,13 @@ struct ContentView: View {
                         LabeledContent("Latency", value: "\(latencyMs) ms")
                     }
                 }
+
+                if let lastError = model.lastError {
+                    Text(lastError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
             }
 
             Section("Context") {
@@ -101,21 +108,36 @@ struct ContentView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    if model.messages.isEmpty {
+                    if model.messages.isEmpty && model.streamingText.isEmpty {
                         emptyState
                     }
+
                     ForEach(model.messages) { message in
                         MessageBubble(message: message)
                             .id(message.id)
+                    }
+
+                    if !model.streamingText.isEmpty {
+                        StreamingMessageBubble(text: model.streamingText)
+                            .id("streaming-response")
                     }
                 }
                 .padding(18)
             }
             .onChange(of: model.messages.count) { _ in
-                if let id = model.messages.last?.id {
-                    withAnimation { proxy.scrollTo(id, anchor: .bottom) }
-                }
+                scrollToBottom(proxy)
             }
+            .onChange(of: model.streamingText) { _ in
+                scrollToBottom(proxy)
+            }
+        }
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        if !model.streamingText.isEmpty {
+            proxy.scrollTo("streaming-response", anchor: .bottom)
+        } else if let id = model.messages.last?.id {
+            proxy.scrollTo(id, anchor: .bottom)
         }
     }
 
@@ -143,13 +165,23 @@ struct ContentView: View {
                 .padding(10)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
                 .onSubmit(model.send)
+                .disabled(model.isSending)
 
-            Button(action: model.send) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 30))
+            if model.isSending {
+                Button(action: model.stop) {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 30))
+                }
+                .buttonStyle(.plain)
+                .help("Stop generation")
+            } else {
+                Button(action: model.send) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 30))
+                }
+                .buttonStyle(.plain)
+                .disabled(model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .buttonStyle(.plain)
-            .disabled(model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSending)
         }
         .padding(14)
     }
@@ -174,6 +206,32 @@ private struct MessageBubble: View {
                 in: RoundedRectangle(cornerRadius: 14)
             )
             if message.role != .user { Spacer(minLength: 90) }
+        }
+    }
+}
+
+private struct StreamingMessageBubble: View {
+    let text: String
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text("Lumi")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+                Text(text)
+                    .textSelection(.enabled)
+            }
+            .padding(12)
+            .background(
+                Color.secondary.opacity(0.10),
+                in: RoundedRectangle(cornerRadius: 14)
+            )
+            Spacer(minLength: 90)
         }
     }
 }
