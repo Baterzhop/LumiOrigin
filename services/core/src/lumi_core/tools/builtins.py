@@ -4,7 +4,7 @@ import fnmatch
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from lumi_core.rag.contracts import Retriever
 
@@ -27,31 +27,35 @@ class Workspace:
         return candidate
 
 
-class ListFilesArgs(BaseModel):
+class StrictArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ListFilesArgs(StrictArgs):
     path: str = "."
     recursive: bool = False
     limit: int = Field(default=100, ge=1, le=500)
 
 
-class ReadTextArgs(BaseModel):
+class ReadTextArgs(StrictArgs):
     path: str
     max_chars: int = Field(default=20_000, ge=1, le=100_000)
 
 
-class SearchTextArgs(BaseModel):
+class SearchTextArgs(StrictArgs):
     query: str = Field(min_length=1, max_length=1_000)
     path: str = "."
     pattern: str = "*"
     limit: int = Field(default=50, ge=1, le=200)
 
 
-class WriteTextArgs(BaseModel):
+class WriteTextArgs(StrictArgs):
     path: str
     content: str = Field(max_length=200_000)
     overwrite: bool = False
 
 
-class KnowledgeSearchArgs(BaseModel):
+class KnowledgeSearchArgs(StrictArgs):
     query: str = Field(min_length=1, max_length=20_000)
     k: int = Field(default=6, ge=1, le=12)
 
