@@ -173,7 +173,7 @@ public enum ToolRuntimeError: Error, CustomStringConvertible, Sendable {
     }
 }
 
-private struct ErasedToolResult: Sendable {
+fileprivate struct ErasedToolResult: Sendable {
     let data: JSONValue
     let warnings: [ToolWarning]
     let metadata: [String: JSONValue]
@@ -237,7 +237,7 @@ public struct AnyTool: Sendable {
         )
     }
 
-    func execute(arguments: Data) async throws -> ErasedToolResult {
+    fileprivate func execute(arguments: Data) async throws -> ErasedToolResult {
         try await executor(arguments)
     }
 }
