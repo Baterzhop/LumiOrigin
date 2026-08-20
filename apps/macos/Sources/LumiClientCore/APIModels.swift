@@ -26,6 +26,24 @@ struct TaskCreateRequestDTO: Encodable, Sendable {
     }
 }
 
+struct MemoryCreateRequestDTO: Encodable, Sendable {
+    let content: String
+    let kind: String
+    let title: String?
+    let approvedByUser: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case content, kind, title
+        case approvedByUser = "approved_by_user"
+    }
+}
+
+struct MemoryUpdateRequestDTO: Encodable, Sendable {
+    let content: String?
+    let kind: String?
+    let title: String?
+}
+
 public struct CitationDTO: Decodable, Sendable, Hashable, Identifiable {
     public let chunkID: String
     public let documentID: String
@@ -44,6 +62,48 @@ public struct CitationDTO: Decodable, Sendable, Hashable, Identifiable {
         case documentID = "document_id"
         case title, source, text, score, page, section, retrieval
     }
+}
+
+public struct MemoryHitDTO: Decodable, Sendable, Hashable, Identifiable {
+    public let memoryID: String
+    public let kind: String
+    public let title: String?
+    public let content: String
+    public let source: String
+    public let score: Double
+    public let retrieval: [String]
+
+    public var id: String { memoryID }
+
+    enum CodingKeys: String, CodingKey {
+        case memoryID = "memory_id"
+        case kind, title, content, source, score, retrieval
+    }
+}
+
+public struct MemoryRecordDTO: Decodable, Sendable, Hashable, Identifiable {
+    public let id: String
+    public let kind: String
+    public let title: String?
+    public let content: String
+    public let source: String
+    public let approved: Bool
+    public let createdAt: String
+    public let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, title, content, source, approved
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+public struct MemoriesResponse: Decodable, Sendable {
+    public let memories: [MemoryRecordDTO]
+}
+
+public struct MemoryEnvelopeResponse: Decodable, Sendable {
+    public let memory: MemoryRecordDTO
 }
 
 public enum StreamEventType: String, Decodable, Sendable {
@@ -67,6 +127,7 @@ public struct ChatStreamEvent: Decodable, Sendable {
     public let error: String?
     public let finishReason: String?
     public let citations: [CitationDTO]?
+    public let memories: [MemoryHitDTO]?
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -76,7 +137,7 @@ public struct ChatStreamEvent: Decodable, Sendable {
         case messageID = "message_id"
         case provider, model, fallback, error
         case finishReason = "finish_reason"
-        case citations
+        case citations, memories
     }
 }
 
@@ -111,6 +172,24 @@ public struct RuntimeToolsStatus: Decodable, Sendable {
     }
 }
 
+public struct RuntimeMemoryStatus: Decodable, Sendable {
+    public let count: Int
+    public let semanticEnabled: Bool
+    public let embeddingModel: String?
+    public let recallK: Int
+    public let contextMaxInputTokens: Int
+    public let contextRecentTokens: Int
+
+    enum CodingKeys: String, CodingKey {
+        case count
+        case semanticEnabled = "semantic_enabled"
+        case embeddingModel = "embedding_model"
+        case recallK = "recall_k"
+        case contextMaxInputTokens = "context_max_input_tokens"
+        case contextRecentTokens = "context_recent_tokens"
+    }
+}
+
 public struct RuntimeStatusResponse: Decodable, Sendable {
     public let ok: Bool
     public let streaming: Bool
@@ -119,11 +198,12 @@ public struct RuntimeStatusResponse: Decodable, Sendable {
     public let activeGenerations: Int
     public let rag: RuntimeRAGStatus?
     public let tools: RuntimeToolsStatus?
+    public let memory: RuntimeMemoryStatus?
 
     enum CodingKeys: String, CodingKey {
         case ok, streaming, provider, model
         case activeGenerations = "active_generations"
-        case rag, tools
+        case rag, tools, memory
     }
 }
 
