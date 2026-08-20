@@ -72,8 +72,8 @@ public indirect enum AgentJSONValue: Codable, Hashable, Sendable {
         case .integer(let value): return .integer(value)
         case .number(let value): return .number(value)
         case .boolean(let value): return .boolean(value)
-        case .array(let value): return .array(value.map(\.toolValue))
-        case .object(let value): return .object(value.mapValues(\.toolValue))
+        case .array(let value): return .array(value.map { $0.toolValue })
+        case .object(let value): return .object(value.mapValues { $0.toolValue })
         case .null: return .null
         }
     }
