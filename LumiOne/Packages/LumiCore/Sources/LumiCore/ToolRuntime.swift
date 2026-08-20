@@ -44,28 +44,74 @@ public enum JSONValue: Codable, Equatable, Sendable {
     }
 }
 
-public struct ToolDescriptor: Hashable, Codable, Sendable {
+public struct ToolDescriptor: Equatable, Codable, Sendable {
     public let name: String
     public let version: String
     public let summary: String
     public let risk: ToolRisk
     public let capability: ToolCapability
+    public let inputSchema: JSONValue
 
     public init(
         name: String,
         version: String,
         summary: String,
         risk: ToolRisk,
-        capability: ToolCapability
+        capability: ToolCapability,
+        inputSchema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([:]),
+            "additionalProperties": .bool(false)
+        ])
     ) {
         self.name = name
         self.version = version
         self.summary = summary
         self.risk = risk
         self.capability = capability
+        self.inputSchema = inputSchema
     }
 
     public var registryKey: String { "\(name)@\(version)" }
+
+    /// OpenAI-compatible function names are restricted to a compact ASCII set.
+    /// Internal Lumi names may remain namespaced (`file.readText`).
+    public var wireName: String {
+        Self.makeWireName(name: name, version: version)
+    }
+
+    public static func makeWireName(name: String, version: String) -> String {
+        func sanitize(_ value: String) -> String {
+            var output = ""
+            var previousWasSeparator = false
+
+            for scalar in value.unicodeScalars {
+                let ascii = scalar.value
+                let allowed =
+                    (48...57).contains(ascii) ||
+                    (65...90).contains(ascii) ||
+                    (97...122).contains(ascii) ||
+                    ascii == 45 || ascii == 95
+
+                if allowed {
+                    output.unicodeScalars.append(scalar)
+                    previousWasSeparator = false
+                } else if !previousWasSeparator {
+                    output.append("_")
+                    previousWasSeparator = true
+                }
+            }
+
+            return output.trimmingCharacters(in: CharacterSet(charactersIn: "_-"))
+        }
+
+        let cleanName = sanitize(name)
+        let cleanVersion = sanitize(version)
+        let base = cleanName.isEmpty ? "tool" : cleanName
+        let suffix = "_v\(cleanVersion.isEmpty ? "1" : cleanVersion)"
+        let availableBaseLength = max(1, 64 - suffix.count)
+        return String(base.prefix(availableBaseLength)) + suffix
+    }
 }
 
 public struct ToolWarning: Codable, Equatable, Sendable {
@@ -97,17 +143,20 @@ public extension Tool {
 
 public struct ToolCall: Identifiable, Equatable, Sendable {
     public let id: UUID
+    public let providerCallID: String
     public let name: String
     public let version: String
     public let arguments: Data
 
     public init(
         id: UUID = UUID(),
+        providerCallID: String? = nil,
         name: String,
         version: String,
         arguments: Data
     ) {
         self.id = id
+        self.providerCallID = providerCallID ?? id.uuidString
         self.name = name
         self.version = version
         self.arguments = arguments
@@ -116,9 +165,11 @@ public struct ToolCall: Identifiable, Equatable, Sendable {
     public static func encoding<Input: Encodable & Sendable>(
         name: String,
         version: String,
-        input: Input
+        input: Input,
+        providerCallID: String? = nil
     ) throws -> ToolCall {
         ToolCall(
+            providerCallID: providerCallID,
             name: name,
             version: version,
             arguments: try JSONEncoder().encode(input)
@@ -155,6 +206,7 @@ public enum ToolExecutionOutcome: Sendable, Equatable {
 
 public enum ToolRuntimeError: Error, CustomStringConvertible, Sendable {
     case duplicateTool(String)
+    case duplicateWireName(String)
     case unknownTool(name: String, version: String)
     case invalidArguments(tool: String, details: String)
     case invalidOutput(tool: String, details: String)
@@ -163,6 +215,8 @@ public enum ToolRuntimeError: Error, CustomStringConvertible, Sendable {
         switch self {
         case .duplicateTool(let key):
             return "Tool registry contains duplicate tool \(key)."
+        case .duplicateWireName(let name):
+            return "Tool registry contains duplicate model wire name \(name)."
         case .unknownTool(let name, let version):
             return "Unknown tool \(name)@\(version)."
         case .invalidArguments(let tool, let details):
@@ -247,10 +301,15 @@ public struct ToolRegistry: Sendable {
 
     public init(tools: [AnyTool]) throws {
         var indexed: [String: AnyTool] = [:]
+        var wireNames: Set<String> = []
+
         for tool in tools {
             let key = tool.descriptor.registryKey
             guard indexed[key] == nil else {
                 throw ToolRuntimeError.duplicateTool(key)
+            }
+            guard wireNames.insert(tool.descriptor.wireName).inserted else {
+                throw ToolRuntimeError.duplicateWireName(tool.descriptor.wireName)
             }
             indexed[key] = tool
         }

@@ -48,6 +48,51 @@ public struct Conversation: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// Durable representation of a completed or denied tool operation.
+/// It contains enough protocol information to reconstruct a valid
+/// `assistant tool_call -> tool result` exchange for OpenAI-compatible models.
+public struct ToolHistoryEvent: Codable, Equatable, Sendable {
+    public enum Status: String, Codable, Sendable {
+        case success
+        case denied
+    }
+
+    public let status: Status
+    public let callID: UUID
+    public let providerCallID: String
+    public let tool: String
+    public let version: String
+    public let arguments: JSONValue
+    public let data: JSONValue?
+    public let warnings: [ToolWarning]
+    public let metadata: [String: JSONValue]
+    public let detail: String?
+
+    public init(
+        status: Status,
+        callID: UUID,
+        providerCallID: String,
+        tool: String,
+        version: String,
+        arguments: JSONValue,
+        data: JSONValue? = nil,
+        warnings: [ToolWarning] = [],
+        metadata: [String: JSONValue] = [:],
+        detail: String? = nil
+    ) {
+        self.status = status
+        self.callID = callID
+        self.providerCallID = providerCallID
+        self.tool = tool
+        self.version = version
+        self.arguments = arguments
+        self.data = data
+        self.warnings = warnings
+        self.metadata = metadata
+        self.detail = detail
+    }
+}
+
 public enum RuntimePhase: String, Codable, Sendable {
     case idle
     case loadingConversation

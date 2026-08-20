@@ -262,15 +262,19 @@ public actor AgentRuntime {
         call: ToolCall,
         in conversation: Conversation
     ) async throws -> Conversation {
-        let payload = ToolEventPayload(
+        let event = ToolHistoryEvent(
             status: .success,
             callID: call.id,
+            providerCallID: call.providerCallID,
             tool: success.descriptor.name,
             version: success.descriptor.version,
+            arguments: try decodeToolArguments(call.arguments),
             data: success.data,
+            warnings: success.warnings,
+            metadata: success.metadata,
             detail: nil
         )
-        return try await appendToolPayload(payload, to: conversation)
+        return try await appendToolEvent(event, to: conversation)
     }
 
     private func persistToolDenial(
@@ -278,22 +282,26 @@ public actor AgentRuntime {
         request: PermissionRequest,
         in conversation: Conversation
     ) async throws -> Conversation {
-        let payload = ToolEventPayload(
+        let event = ToolHistoryEvent(
             status: .denied,
             callID: call.id,
+            providerCallID: call.providerCallID,
             tool: call.name,
             version: call.version,
+            arguments: try decodeToolArguments(call.arguments),
             data: nil,
+            warnings: [],
+            metadata: [:],
             detail: "User denied \(request.capability.rawValue) for \(request.resource.identifier)."
         )
-        return try await appendToolPayload(payload, to: conversation)
+        return try await appendToolEvent(event, to: conversation)
     }
 
-    private func appendToolPayload(
-        _ payload: ToolEventPayload,
+    private func appendToolEvent(
+        _ event: ToolHistoryEvent,
         to conversation: Conversation
     ) async throws -> Conversation {
-        let data = try JSONEncoder().encode(payload)
+        let data = try JSONEncoder().encode(event)
         guard let content = String(data: data, encoding: .utf8) else {
             throw AgentRuntimeError.toolEventEncodingFailed
         }
@@ -305,6 +313,14 @@ public actor AgentRuntime {
         phase = .persistingToolResult
         try await store.saveConversation(updated)
         return updated
+    }
+
+    private func decodeToolArguments(_ data: Data) throws -> JSONValue {
+        do {
+            return try JSONDecoder().decode(JSONValue.self, from: data)
+        } catch {
+            throw AgentRuntimeError.toolArgumentsEncodingFailed
+        }
     }
 
     private func hasPendingExecution(for conversationID: UUID) -> Bool {
@@ -326,20 +342,6 @@ private struct PendingExecution: Sendable {
     let completedToolSteps: Int
 }
 
-private struct ToolEventPayload: Codable, Sendable {
-    enum Status: String, Codable, Sendable {
-        case success
-        case denied
-    }
-
-    let status: Status
-    let callID: UUID
-    let tool: String
-    let version: String
-    let data: JSONValue?
-    let detail: String?
-}
-
 public enum AgentRuntimeError: Error, CustomStringConvertible, Sendable {
     case emptyInput
     case emptyFinalResponse
@@ -348,6 +350,7 @@ public enum AgentRuntimeError: Error, CustomStringConvertible, Sendable {
     case toolsUnavailable
     case toolStepLimitExceeded(Int)
     case toolEventEncodingFailed
+    case toolArgumentsEncodingFailed
 
     public var description: String {
         switch self {
@@ -365,6 +368,8 @@ public enum AgentRuntimeError: Error, CustomStringConvertible, Sendable {
             return "Tool step limit exceeded (\(limit))."
         case .toolEventEncodingFailed:
             return "Tool event could not be encoded for durable conversation history."
+        case .toolArgumentsEncodingFailed:
+            return "Tool arguments could not be encoded for durable protocol history."
         }
     }
 }

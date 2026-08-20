@@ -58,7 +58,24 @@ public struct ReadTextFileTool: Tool {
         version: "1",
         summary: "Read UTF-8 text from one explicitly authorized user file.",
         risk: .readOnly,
-        capability: .readUserFile
+        capability: .readUserFile,
+        inputSchema: .object([
+            "type": .string("object"),
+            "properties": .object([
+                "path": .object([
+                    "type": .string("string"),
+                    "description": .string("Absolute path of the explicitly selected file.")
+                ]),
+                "maxBytes": .object([
+                    "type": .string("integer"),
+                    "minimum": .number(1),
+                    "maximum": .number(16_777_216),
+                    "description": .string("Maximum bytes to read. Defaults to 1 MiB.")
+                ])
+            ]),
+            "required": .array([.string("path")]),
+            "additionalProperties": .bool(false)
+        ])
     )
 
     public init() {}
