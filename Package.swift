@@ -1,20 +1,30 @@
-// swift-tools-version:5.7
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
-    name: "LumiOrigin",
-    platforms: [.macOS(.v12)],
+    name: "LumiOneCore",
     products: [
-        .executable(name: "LumiOriginApp", targets: ["LumiOrigin"])
+        .library(name: "LumiCore", targets: ["LumiCore"])
     ],
-    dependencies: [],
     targets: [
-        .executableTarget(
-            name: "LumiOrigin",
-            path: ".",
-            exclude: [],
-            sources: ["."],
-            resources: []
+        .systemLibrary(
+            name: "CSQLite",
+            path: "LumiOne/Packages/LumiCore/Sources/CSQLite",
+            pkgConfig: "sqlite3",
+            providers: [
+                .apt(["libsqlite3-dev"]),
+                .brew(["sqlite3"])
+            ]
+        ),
+        .target(
+            name: "LumiCore",
+            dependencies: ["CSQLite"],
+            path: "LumiOne/Packages/LumiCore/Sources/LumiCore"
+        ),
+        .testTarget(
+            name: "LumiCoreTests",
+            dependencies: ["LumiCore"],
+            path: "LumiOne/Packages/LumiCore/Tests/LumiCoreTests"
         )
     ]
 )

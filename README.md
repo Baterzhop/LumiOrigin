@@ -1,55 +1,47 @@
-# LumiOrigin
+# LUMI ONE
 
-> 🧠 An experimental autonomous AI core, written in Swift, designed to simulate self-reflection, intent detection, emotional response, and memory-based reasoning. Powered by modules like AeonCore, Reflector, SelfCoder, and a SwiftUI interface.
+This branch is the engineering rebuild of Lumi.
 
----
+The original Lumi code and concepts remain preserved in Git history and on `main`. The rebuild does not copy the legacy multi-core architecture into production code.
 
-## 📦 Architecture
+## Current target
 
-- `AeonCore.swift` — main cognitive core, emotional logic, short-term memory
-- `IntentEngine.swift` — intent detection and labeling module
-- `Reflector.swift` — internal self-assessment and observation
-- `SelfCoder.swift` — allows Lumi to save, compare, and rewrite code snippets
-- `LumiApp.swift` — command router & integration core
-- `LumiInterface.swift` — SwiftUI-based interface to interact with Lumi
+Build one reliable macOS application that can:
 
----
+1. launch without developer intervention;
+2. keep conversations across restarts;
+3. use a local model through a controlled model interface;
+4. access user data only through explicit capabilities;
+5. execute tools through one deterministic agent runtime;
+6. expose failures instead of silently pretending a subsystem works.
 
-## 🧠 Features
+## Repository layout
 
-- Emotional context & reasoning
-- Intent recognition
-- Self-observation and summarization
-- Self-coding memory (can track and compare changes)
-- Lightweight interface with SwiftUI
+- `LumiOne/Packages/LumiCore` — portable application core and tests.
+- `LumiOne/Apps/LumiMac` — macOS SwiftUI application shell.
+- `LumiOne/Docs` — architecture, implementation status, and quality gates.
+- legacy root source files — historical Lumi Origin prototype; not referenced by the Lumi One package graph.
 
----
+## Engineering rules
 
-## 🚀 How to Run
+- One `AgentRuntime`; no Dual Core, AeonCore, MetaLumi, or competing controllers.
+- Deterministic code owns permissions, persistence, side effects, and state transitions.
+- LLMs may propose actions; they never execute effects directly.
+- No feature is `INTEGRATED` until an end-to-end vertical slice passes.
+- Persistent-storage failure enters visible Safe Mode. No silent in-memory fallback.
+- Self-modification is proposal-only and remains out of the 1.0 scope.
 
-1. Clone this repo:
+## Build the core
+
 ```bash
-git clone https://github.com/Baterzhop/LumiOrigin.git
-cd LumiOrigin
-## 🧪 Getting Started with Xcode Project
+swift test
+```
 
-To launch LumiOrigin as a full macOS SwiftUI app:
+## Build the macOS app
 
-1. Add `LumiOriginApp.swift` with `@main` entry point.
-2. Open the folder in **Xcode**.
-3. Set `LumiOriginApp.swift` as the entry point if needed.
-4. Run on simulator or Mac.
+```bash
+cd LumiOne/Apps/LumiMac
+swift build
+```
 
-Sample content for `LumiOriginApp.swift`:
-
-```swift
-import SwiftUI
-
-@main
-struct LumiOriginApp: App {
-    var body: some Scene {
-        WindowGroup {
-            LumiInterface()
-        }
-    }
-}
+The first quality gate is conversation persistence across process restarts. Tool execution, knowledge ingestion, memory consolidation, and the Table Assistant are added only after this gate is stable.
