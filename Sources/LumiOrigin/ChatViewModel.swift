@@ -12,6 +12,7 @@ final class ChatViewModel: ObservableObject {
     @Published var selectedProfile = "auto"
     @Published var lastIntent: LumiIntent = .chat
     @Published var contextHits: [KnowledgeHit] = []
+    @Published var contextBudget: ContextBudgetReport?
     @Published var status = "Local-first"
     @Published var runtime: RuntimeMetadata?
     @Published var lastError: String?
@@ -58,6 +59,7 @@ final class ChatViewModel: ObservableObject {
                         streamingText = ""
                         lastIntent = reply.intent
                         contextHits = reply.context
+                        contextBudget = reply.contextBudget
                         runtime = reply.runtime
                         applyRuntimeStatus(reply.runtime)
                         await applyPersistenceStatusIfNeeded()
@@ -95,6 +97,7 @@ final class ChatViewModel: ObservableObject {
             await engine.clearConversation()
             messages = []
             contextHits = []
+            contextBudget = nil
             streamingText = ""
             lastIntent = .chat
             runtime = nil
