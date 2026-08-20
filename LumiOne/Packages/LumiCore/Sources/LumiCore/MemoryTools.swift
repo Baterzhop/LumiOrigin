@@ -104,12 +104,24 @@ public struct RememberMemoryTool: Tool {
             )
         }
 
+        var details: [String: String] = [
+            "operation": "remember",
+            "key": key,
+            "kind": input.kind.rawValue,
+            "proposedValue": value,
+            "confidence": String(input.confidence)
+        ]
+        if let expectedRevision = input.expectedRevision {
+            details["expectedRevision"] = String(expectedRevision)
+        }
+
         return PermissionRequest(
             capability: Self.descriptor.capability,
             resource: .userMemory(key),
             reason: "Persist memory \(key) = \(Self.preview(value)).",
             resourceDisplayName: key,
-            resourceLocationHint: "Persistent user memory"
+            resourceLocationHint: "Persistent user memory",
+            details: details
         )
     }
 
@@ -218,7 +230,12 @@ public struct ForgetMemoryTool: Tool {
             resource: .userMemory(key),
             reason: "Permanently forget memory \(key) at revision \(input.expectedRevision).",
             resourceDisplayName: key,
-            resourceLocationHint: "Persistent user memory — permanent deletion"
+            resourceLocationHint: "Persistent user memory — permanent deletion",
+            details: [
+                "operation": "forget",
+                "key": key,
+                "expectedRevision": String(input.expectedRevision)
+            ]
         )
     }
 
