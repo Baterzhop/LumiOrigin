@@ -1,6 +1,11 @@
 import Foundation
 
 public struct SpreadsheetInspectInput: Codable, Equatable, Sendable {
+    public static let defaultMaxBytes = 4_194_304
+    public static let defaultMaxRows = 20_000
+    public static let defaultMaxColumns = 256
+    public static let defaultPreviewRows = 10
+
     public let resourceID: UserFileResourceID
     public let headerMode: SpreadsheetHeaderMode
     public let delimiter: DelimitedTextDelimiter
@@ -13,10 +18,10 @@ public struct SpreadsheetInspectInput: Codable, Equatable, Sendable {
         resourceID: UserFileResourceID,
         headerMode: SpreadsheetHeaderMode = .firstRow,
         delimiter: DelimitedTextDelimiter = .auto,
-        maxBytes: Int = 4_194_304,
-        maxRows: Int = 20_000,
-        maxColumns: Int = 256,
-        previewRows: Int = 10
+        maxBytes: Int = defaultMaxBytes,
+        maxRows: Int = defaultMaxRows,
+        maxColumns: Int = defaultMaxColumns,
+        previewRows: Int = defaultPreviewRows
     ) {
         self.resourceID = resourceID
         self.headerMode = headerMode
@@ -25,6 +30,27 @@ public struct SpreadsheetInspectInput: Codable, Equatable, Sendable {
         self.maxRows = maxRows
         self.maxColumns = maxColumns
         self.previewRows = previewRows
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case resourceID
+        case headerMode
+        case delimiter
+        case maxBytes
+        case maxRows
+        case maxColumns
+        case previewRows
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        resourceID = try container.decode(UserFileResourceID.self, forKey: .resourceID)
+        headerMode = try container.decodeIfPresent(SpreadsheetHeaderMode.self, forKey: .headerMode) ?? .firstRow
+        delimiter = try container.decodeIfPresent(DelimitedTextDelimiter.self, forKey: .delimiter) ?? .auto
+        maxBytes = try container.decodeIfPresent(Int.self, forKey: .maxBytes) ?? Self.defaultMaxBytes
+        maxRows = try container.decodeIfPresent(Int.self, forKey: .maxRows) ?? Self.defaultMaxRows
+        maxColumns = try container.decodeIfPresent(Int.self, forKey: .maxColumns) ?? Self.defaultMaxColumns
+        previewRows = try container.decodeIfPresent(Int.self, forKey: .previewRows) ?? Self.defaultPreviewRows
     }
 }
 
