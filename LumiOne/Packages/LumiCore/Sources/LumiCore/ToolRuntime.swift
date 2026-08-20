@@ -74,8 +74,6 @@ public struct ToolDescriptor: Equatable, Codable, Sendable {
 
     public var registryKey: String { "\(name)@\(version)" }
 
-    /// OpenAI-compatible function names are restricted to a compact ASCII set.
-    /// Internal Lumi names may remain namespaced (`file.readText`).
     public var wireName: String {
         Self.makeWireName(name: name, version: version)
     }
@@ -139,6 +137,10 @@ public protocol Tool: Sendable {
     /// tools may redact fields that should not be duplicated into hidden chat
     /// history while preserving enough structure for a valid tool round-trip.
     func historyArguments(for input: Input) throws -> JSONValue
+    /// Durable protocol-history representation of a successful tool result.
+    /// The immediate model continuation still receives the full result; tools
+    /// may redact row-level/sensitive payloads from SQLite history here.
+    func historyOutput(for input: Input, output: Output) throws -> JSONValue
 }
 
 public extension Tool {
@@ -155,6 +157,11 @@ public extension Tool {
 
     func historyArguments(for input: Input) throws -> JSONValue {
         let data = try JSONEncoder().encode(input)
+        return try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
+    func historyOutput(for input: Input, output: Output) throws -> JSONValue {
+        let data = try JSONEncoder().encode(output)
         return try JSONDecoder().decode(JSONValue.self, from: data)
     }
 }
@@ -198,7 +205,11 @@ public struct ToolCall: Identifiable, Equatable, Sendable {
 public struct ToolExecutionSuccess: Sendable, Equatable {
     public let callID: UUID
     public let descriptor: ToolDescriptor
+    /// Full ephemeral result used for the immediate model continuation.
     public let data: JSONValue
+    /// Durable result written to conversation history. Defaults to `data` for
+    /// tools that do not need output redaction.
+    public let historyData: JSONValue
     public let warnings: [ToolWarning]
     public let metadata: [String: JSONValue]
 
@@ -206,12 +217,14 @@ public struct ToolExecutionSuccess: Sendable, Equatable {
         callID: UUID,
         descriptor: ToolDescriptor,
         data: JSONValue,
+        historyData: JSONValue? = nil,
         warnings: [ToolWarning] = [],
         metadata: [String: JSONValue] = [:]
     ) {
         self.callID = callID
         self.descriptor = descriptor
         self.data = data
+        self.historyData = historyData ?? data
         self.warnings = warnings
         self.metadata = metadata
     }
@@ -247,6 +260,7 @@ public enum ToolRuntimeError: Error, CustomStringConvertible, Sendable {
 
 fileprivate struct ErasedToolResult: Sendable {
     let data: JSONValue
+    let historyData: JSONValue
     let warnings: [ToolWarning]
     let metadata: [String: JSONValue]
 }
@@ -304,8 +318,10 @@ public struct AnyTool: Sendable {
             do {
                 let encoded = try JSONEncoder().encode(output)
                 let structured = try JSONDecoder().decode(JSONValue.self, from: encoded)
+                let historyStructured = try tool.historyOutput(for: input, output: output)
                 return ErasedToolResult(
                     data: structured,
+                    historyData: historyStructured,
                     warnings: tool.warnings(for: input, output: output),
                     metadata: tool.metadata(for: input, output: output)
                 )
@@ -404,6 +420,7 @@ public actor ToolRuntime {
                 callID: call.id,
                 descriptor: tool.descriptor,
                 data: result.data,
+                historyData: result.historyData,
                 warnings: result.warnings,
                 metadata: result.metadata
             )
