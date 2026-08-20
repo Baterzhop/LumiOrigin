@@ -1,55 +1,95 @@
-# LumiOrigin
+# Lumi V4 — Foundation
 
-> 🧠 An experimental autonomous AI core, written in Swift, designed to simulate self-reflection, intent detection, emotional response, and memory-based reasoning. Powered by modules like AeonCore, Reflector, SelfCoder, and a SwiftUI interface.
+Lumi V4 is a ground-up redesign of Lumi as a local-first AI assistant platform rather than a single chat class.
 
----
+This branch intentionally starts small: one Python core service, one durable SQLite store, explicit model/tool contracts, a bounded agent runtime, and a native macOS client boundary. It is a **modular monolith**, not a microservice swarm.
 
-## 📦 Architecture
+## Architecture
 
-- `AeonCore.swift` — main cognitive core, emotional logic, short-term memory
-- `IntentEngine.swift` — intent detection and labeling module
-- `Reflector.swift` — internal self-assessment and observation
-- `SelfCoder.swift` — allows Lumi to save, compare, and rewrite code snippets
-- `LumiApp.swift` — command router & integration core
-- `LumiInterface.swift` — SwiftUI-based interface to interact with Lumi
+```text
+macOS SwiftUI client
+        │
+        │ HTTP / SSE (streaming in next milestone)
+        ▼
+Lumi Core (Python)
+  ├─ API
+  ├─ Agent runtime
+  ├─ Model gateway
+  ├─ Memory/storage
+  ├─ Tool registry + policy
+  ├─ RAG contracts
+  └─ Observability hooks
+        │
+        ├─ SQLite (canonical local state)
+        └─ Ollama-compatible local model
+```
 
----
+## What is working in this foundation
 
-## 🧠 Features
+- FastAPI core with `/health` and `/v1/chat`.
+- Durable SQLite schema + migration runner.
+- Conversations and messages persist across process restarts.
+- Model provider abstraction with Ollama + deterministic fallback.
+- Structured model metadata: provider/model/fallback/error.
+- Bounded agent runtime with explicit conversation persistence.
+- Tool risk policy contract (low/medium/high/critical).
+- Unit tests that do not require a real model server.
+- CI on Linux and macOS.
 
-- Emotional context & reasoning
-- Intent recognition
-- Self-observation and summarization
-- Self-coding memory (can track and compare changes)
-- Lightweight interface with SwiftUI
+## What is deliberately not claimed yet
 
----
+V4 Foundation is not yet a full autonomous agent. It does not yet include dense embeddings, reranking, document ingestion, tool execution, streaming, long-term semantic memory, or a production SwiftUI client. These are separate milestones so they can be built and evaluated instead of being hidden inside one large `LumiEngine`.
 
-## 🚀 How to Run
+## Run
 
-1. Clone this repo:
 ```bash
-git clone https://github.com/Baterzhop/LumiOrigin.git
-cd LumiOrigin
-## 🧪 Getting Started with Xcode Project
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e "services/core[dev]"
+uvicorn lumi_core.api.main:app --reload --port 8790
+```
 
-To launch LumiOrigin as a full macOS SwiftUI app:
+Then:
 
-1. Add `LumiOriginApp.swift` with `@main` entry point.
-2. Open the folder in **Xcode**.
-3. Set `LumiOriginApp.swift` as the entry point if needed.
-4. Run on simulator or Mac.
+```bash
+curl http://127.0.0.1:8790/health
+curl -X POST http://127.0.0.1:8790/v1/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Hello Lumi"}'
+```
 
-Sample content for `LumiOriginApp.swift`:
+Optional local model:
 
-```swift
-import SwiftUI
+```bash
+export LUMI_OLLAMA_URL=http://127.0.0.1:11434/api/chat
+export LUMI_OLLAMA_MODEL=llama3.2
+```
 
-@main
-struct LumiOriginApp: App {
-    var body: some Scene {
-        WindowGroup {
-            LumiInterface()
-        }
-    }
-}
+## Test
+
+```bash
+pytest services/core/tests
+```
+
+## Repository layout
+
+```text
+apps/
+  macos/                 native client boundary (next milestone)
+services/
+  core/
+    src/lumi_core/
+      agent/
+      api/
+      models/
+      rag/
+      storage/
+      tools/
+    tests/
+docs/
+  architecture.md
+  adr/
+.github/workflows/
+```
+
+See `docs/architecture.md` for the V4 target design and milestone gates.
