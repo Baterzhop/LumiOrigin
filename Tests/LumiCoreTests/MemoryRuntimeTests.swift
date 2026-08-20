@@ -50,7 +50,8 @@ final class MemoryRuntimeTests: XCTestCase {
             XCTFail("Expected explicit-only memory policy to reject derived write.")
         } catch let error as MemoryError {
             guard case .policyDenied = error else {
-                return XCTFail("Unexpected memory error: \(error)")
+                XCTFail("Unexpected memory error: \(error)")
+                return
             }
         }
     }
@@ -130,8 +131,9 @@ final class MemoryRuntimeTests: XCTestCase {
             "User prefers Hungarian for translation output.",
             tags: ["language", "translation"]
         )
-        let reply = await engine.respond(to: "Which language should translation use?", profile: "chat")
+        let reply = await engine.respond(to: "Which language do I prefer for translation?", profile: "chat")
 
+        XCTAssertTrue(reply.classification.capabilities.contains(.memory))
         XCTAssertEqual(reply.memories.first?.record.id, saved.id)
         XCTAssertEqual(reply.contextBudget.selectedMemoryCount, 1)
         let systemPrompt = await recorder.lastSystemPrompt()
