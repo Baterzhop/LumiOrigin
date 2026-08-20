@@ -54,13 +54,31 @@ final class DeveloperViewModel: ObservableObject {
     func approvePlan() {
         guard let id = session?.id, session?.status == "awaiting_plan_approval", !isWorking else { return }
         isWorking = true
-        statusText = "Applying approved proposal and running bounded checks…"
+        statusText = "Applying approved proposal and evaluating required validation…"
         Task {
             do {
                 session = try await api.approveDeveloperPlan(id)
                 statusText = describe(session)
             } catch {
                 statusText = "Apply/validation failed: \(error.localizedDescription)"
+            }
+            isWorking = false
+        }
+    }
+
+    func revalidate() {
+        guard let id = session?.id,
+              ["validation_failed", "validation_incomplete"].contains(session?.status ?? ""),
+              status?.localChecksEnabled == true,
+              !isWorking else { return }
+        isWorking = true
+        statusText = "Running the fixed approved validation profiles…"
+        Task {
+            do {
+                session = try await api.revalidateDeveloperSession(id)
+                statusText = describe(session)
+            } catch {
+                statusText = "Validation retry failed: \(error.localizedDescription)"
             }
             isWorking = false
         }
@@ -112,7 +130,7 @@ final class DeveloperViewModel: ObservableObject {
         case "validation_failed":
             return "Validation failed. Nothing was pushed or published."
         case "validation_incomplete":
-            return "Validation is incomplete. Publishing is blocked until required local checks are explicitly enabled and rerun."
+            return "Validation is incomplete. Publishing is blocked. Enable local checks explicitly, then run validation again."
         case "published":
             return "Draft pull request created. Lumi did not merge it."
         case "denied":
