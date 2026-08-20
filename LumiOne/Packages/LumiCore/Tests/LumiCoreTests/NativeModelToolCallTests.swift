@@ -8,11 +8,11 @@ import XCTest
 final class NativeModelToolCallTests: XCTestCase {
     func testProviderSendsToolSchemaAndParsesNativeToolCall() async throws {
         let descriptor = ReadTextFileTool.descriptor
-        XCTAssertEqual(descriptor.wireName, "file_readText_v1")
+        XCTAssertEqual(descriptor.wireName, "file_readText_v2")
 
         let response = Data(
             """
-            {"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_native_123","type":"function","function":{"name":"\(descriptor.wireName)","arguments":"{\\"path\\":\\"/tmp/demo.txt\\"}"}}]}}]}
+            {"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_native_123","type":"function","function":{"name":"\(descriptor.wireName)","arguments":"{\\"resourceID\\":\\"selected-file-123\\"}"}}]}}]}
             """.utf8
         )
         let transport = StubHTTPTransport(responses: [
@@ -32,10 +32,10 @@ final class NativeModelToolCallTests: XCTestCase {
         }
         XCTAssertEqual(call.providerCallID, "call_native_123")
         XCTAssertEqual(call.name, "file.readText")
-        XCTAssertEqual(call.version, "1")
+        XCTAssertEqual(call.version, "2")
 
         let decodedInput = try JSONDecoder().decode(ReadTextFileInput.self, from: call.arguments)
-        XCTAssertEqual(decodedInput.path, "/tmp/demo.txt")
+        XCTAssertEqual(decodedInput.resourceID.rawValue, "selected-file-123")
         XCTAssertEqual(decodedInput.maxBytes, ReadTextFileInput.defaultMaxBytes)
 
         let bodies = await transport.capturedBodies()
@@ -46,14 +46,15 @@ final class NativeModelToolCallTests: XCTestCase {
         let tools = try XCTUnwrap(root["tools"] as? [[String: Any]])
         XCTAssertEqual(tools.count, 1)
         let function = try XCTUnwrap(tools[0]["function"] as? [String: Any])
-        XCTAssertEqual(function["name"] as? String, "file_readText_v1")
+        XCTAssertEqual(function["name"] as? String, "file_readText_v2")
 
         let parameters = try XCTUnwrap(function["parameters"] as? [String: Any])
         XCTAssertEqual(parameters["type"] as? String, "object")
         let required = try XCTUnwrap(parameters["required"] as? [String])
-        XCTAssertEqual(required, ["path"])
+        XCTAssertEqual(required, ["resourceID"])
         let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
-        XCTAssertNotNil(properties["path"])
+        XCTAssertNotNil(properties["resourceID"])
+        XCTAssertNil(properties["path"])
         XCTAssertNotNil(properties["maxBytes"])
     }
 
@@ -121,7 +122,7 @@ final class NativeModelToolCallTests: XCTestCase {
         } catch let error as ModelProviderError {
             XCTAssertEqual(
                 error.description,
-                "Model returned malformed JSON arguments for file.readText@1."
+                "Model returned malformed JSON arguments for file.readText@2."
             )
         }
     }
@@ -131,8 +132,8 @@ final class NativeModelToolCallTests: XCTestCase {
         let response = Data(
             """
             {"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[
-              {"id":"call_1","type":"function","function":{"name":"\(wireName)","arguments":"{\\"path\\":\\"/tmp/a.txt\\"}"}},
-              {"id":"call_2","type":"function","function":{"name":"\(wireName)","arguments":"{\\"path\\":\\"/tmp/b.txt\\"}"}}
+              {"id":"call_1","type":"function","function":{"name":"\(wireName)","arguments":"{\\"resourceID\\":\\"a\\"}"}},
+              {"id":"call_2","type":"function","function":{"name":"\(wireName)","arguments":"{\\"resourceID\\":\\"b\\"}"}}
             ]}}]}
             """.utf8
         )
@@ -163,8 +164,8 @@ final class NativeModelToolCallTests: XCTestCase {
             callID: UUID(),
             providerCallID: "call_roundtrip_42",
             tool: "file.readText",
-            version: "1",
-            arguments: .object(["path": .string("/tmp/demo.txt")]),
+            version: "2",
+            arguments: .object(["resourceID": .string("selected-file-123")]),
             data: .object(["content": .string("safe result")]),
             warnings: [],
             metadata: ["encoding": .string("utf-8")]
@@ -201,11 +202,11 @@ final class NativeModelToolCallTests: XCTestCase {
         let calls = try XCTUnwrap(assistant["tool_calls"] as? [[String: Any]])
         XCTAssertEqual(calls[0]["id"] as? String, "call_roundtrip_42")
         let function = try XCTUnwrap(calls[0]["function"] as? [String: Any])
-        XCTAssertEqual(function["name"] as? String, "file_readText_v1")
+        XCTAssertEqual(function["name"] as? String, "file_readText_v2")
         let argumentString = try XCTUnwrap(function["arguments"] as? String)
         let argumentData = try XCTUnwrap(argumentString.data(using: .utf8))
         let arguments = try JSONDecoder().decode(JSONValue.self, from: argumentData)
-        XCTAssertEqual(arguments, .object(["path": .string("/tmp/demo.txt")]))
+        XCTAssertEqual(arguments, .object(["resourceID": .string("selected-file-123")]))
 
         let toolMessage = messages[3]
         XCTAssertEqual(toolMessage["tool_call_id"] as? String, "call_roundtrip_42")
