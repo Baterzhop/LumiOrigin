@@ -35,23 +35,11 @@ public actor LumiEngine {
     }
 
     public func respond(_ request: LumiRequest) async -> LumiReply {
-        let cleanInput = request.input.trimmingCharacters(in: .whitespacesAndNewlines)
-        let intent = router.detect(cleanInput)
-        let selectedProfileName = request.profileOverride ?? profileName(for: intent)
-        let profile = prompts.profile(named: selectedProfileName)
-
-        _ = await memory.append(role: .user, content: cleanInput)
-        let context = await knowledge.search(cleanInput, limit: 4)
-        let history = await memory.recent(limit: 18)
-        let systemPrompt = composeSystemPrompt(profile: profile, context: context)
+        let prepared = await prepare(request)
 
         let completion: ModelResponse
         do {
-            completion = try await llm.complete(
-                messages: history,
-                systemPrompt: systemPrompt,
-                profile: profile
-            )
+            completion = try await llm.complete(prepared.modelRequest)
         } catch {
             completion = ModelResponse(
                 content: "I couldn't reach the configured language model: \(error.localizedDescription)",
@@ -64,16 +52,71 @@ public actor LumiEngine {
             )
         }
 
-        let assistant = await memory.append(role: .assistant, content: completion.content)
-        await reflections.record(input: cleanInput, intent: intent, response: completion.content)
-
-        return LumiReply(
-            message: assistant,
-            intent: intent,
-            context: context,
-            profile: profile.name,
-            runtime: completion.runtime
+        return await finalize(
+            completion: completion,
+            input: prepared.cleanInput,
+            intent: prepared.intent,
+            context: prepared.context,
+            profile: prepared.profile
         )
+    }
+
+    public func streamRespond(
+        to input: String,
+        profile requestedProfile: String? = nil
+    ) async -> AsyncThrowingStream<LumiStreamEvent, Error> {
+        await streamRespond(
+            LumiRequest(
+                input: input,
+                profileOverride: requestedProfile
+            )
+        )
+    }
+
+    public func streamRespond(_ request: LumiRequest) async -> AsyncThrowingStream<LumiStreamEvent, Error> {
+        let prepared = await prepare(request)
+        let modelStream = llm.stream(prepared.modelRequest)
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await event in modelStream {
+                        try Task.checkCancellation()
+
+                        switch event {
+                        case .token(let token):
+                            continuation.yield(.token(token))
+
+                        case .completed(let completion):
+                            let reply = await self.finalize(
+                                completion: completion,
+                                input: prepared.cleanInput,
+                                intent: prepared.intent,
+                                context: prepared.context,
+                                profile: prepared.profile
+                            )
+                            continuation.yield(.completed(reply))
+                            continuation.finish()
+                            return
+                        }
+                    }
+
+                    continuation.finish(throwing: LumiRuntimeError.invalidResponse)
+                } catch is CancellationError {
+                    continuation.finish(throwing: LumiRuntimeError.cancelled)
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: LumiRuntimeError.cancelled)
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
     }
 
     public func messages() async -> [ChatMessage] {
@@ -91,6 +134,57 @@ public actor LumiEngine {
 
     public func availableProfiles() -> [String] {
         prompts.names
+    }
+
+    private struct PreparedRequest: Sendable {
+        let cleanInput: String
+        let intent: LumiIntent
+        let context: [KnowledgeHit]
+        let profile: PromptProfile
+        let modelRequest: ModelRequest
+    }
+
+    private func prepare(_ request: LumiRequest) async -> PreparedRequest {
+        let cleanInput = request.input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let intent = router.detect(cleanInput)
+        let selectedProfileName = request.profileOverride ?? profileName(for: intent)
+        let profile = prompts.profile(named: selectedProfileName)
+
+        _ = await memory.append(role: .user, content: cleanInput)
+        let context = await knowledge.search(cleanInput, limit: 4)
+        let history = await memory.recent(limit: 18)
+        let systemPrompt = composeSystemPrompt(profile: profile, context: context)
+
+        return PreparedRequest(
+            cleanInput: cleanInput,
+            intent: intent,
+            context: context,
+            profile: profile,
+            modelRequest: ModelRequest(
+                messages: history,
+                systemPrompt: systemPrompt,
+                profile: profile
+            )
+        )
+    }
+
+    private func finalize(
+        completion: ModelResponse,
+        input: String,
+        intent: LumiIntent,
+        context: [KnowledgeHit],
+        profile: PromptProfile
+    ) async -> LumiReply {
+        let assistant = await memory.append(role: .assistant, content: completion.content)
+        await reflections.record(input: input, intent: intent, response: completion.content)
+
+        return LumiReply(
+            message: assistant,
+            intent: intent,
+            context: context,
+            profile: profile.name,
+            runtime: completion.runtime
+        )
     }
 
     private func profileName(for intent: LumiIntent) -> String {
