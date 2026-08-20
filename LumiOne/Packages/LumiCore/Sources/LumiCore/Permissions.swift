@@ -18,6 +18,8 @@ public enum ToolCapability: String, Codable, Sendable {
     case writeAppData
     case readUserFile
     case writeUserFile
+    case writeUserMemory
+    case deleteUserMemory
     case externalAction
     case systemCommand
     case modifyCode
@@ -28,6 +30,7 @@ public struct ResourceScope: Hashable, Codable, Sendable {
         case appData
         case file
         case userFile
+        case userMemory
         case directory
         case externalService
         case system
@@ -49,6 +52,12 @@ public struct ResourceScope: Hashable, Codable, Sendable {
 
     public static func userFile(_ id: UserFileResourceID) -> ResourceScope {
         ResourceScope(kind: .userFile, identifier: id.rawValue)
+    }
+
+    /// Exact logical memory-key scope. Callers must canonicalize and validate the
+    /// key before constructing this scope so a grant cannot alias another memory.
+    public static func userMemory(_ canonicalKey: String) -> ResourceScope {
+        ResourceScope(kind: .userMemory, identifier: canonicalKey)
     }
 }
 
