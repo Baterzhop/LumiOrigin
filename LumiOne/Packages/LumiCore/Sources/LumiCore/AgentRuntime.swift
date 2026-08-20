@@ -70,7 +70,8 @@ public actor AgentRuntime {
                 conversation: conversation,
                 conversationID: conversationID,
                 completedToolSteps: 0,
-                contextSnapshot: contextSnapshot
+                contextSnapshot: contextSnapshot,
+                transientToolEvents: [:]
             )
         } catch {
             phase = .failed
@@ -105,20 +106,24 @@ public actor AgentRuntime {
                     call: pending.call,
                     request: changedRequest,
                     completedToolSteps: pending.completedToolSteps,
-                    contextSnapshot: pending.contextSnapshot
+                    contextSnapshot: pending.contextSnapshot,
+                    transientToolEvents: pending.transientToolEvents
                 )
 
             case .success(let success):
-                let conversation = try await persistToolSuccess(
+                let persisted = try await persistToolSuccess(
                     success,
                     call: pending.call,
                     in: pending.conversation
                 )
+                var transient = pending.transientToolEvents
+                transient[pending.call.id] = persisted.transientEvent
                 return try await continueRun(
-                    conversation: conversation,
+                    conversation: persisted.conversation,
                     conversationID: pending.conversationID,
                     completedToolSteps: pending.completedToolSteps + 1,
-                    contextSnapshot: pending.contextSnapshot
+                    contextSnapshot: pending.contextSnapshot,
+                    transientToolEvents: transient
                 )
             }
         } catch {
@@ -135,17 +140,20 @@ public actor AgentRuntime {
 
         do {
             lastError = nil
-            let conversation = try await persistToolDenial(
+            let persisted = try await persistToolDenial(
                 call: pending.call,
                 request: pending.approval.permission,
                 in: pending.conversation
             )
+            var transient = pending.transientToolEvents
+            transient[pending.call.id] = persisted.transientEvent
 
             return try await continueRun(
-                conversation: conversation,
+                conversation: persisted.conversation,
                 conversationID: pending.conversationID,
                 completedToolSteps: pending.completedToolSteps + 1,
-                contextSnapshot: pending.contextSnapshot
+                contextSnapshot: pending.contextSnapshot,
+                transientToolEvents: transient
             )
         } catch {
             phase = .failed
@@ -166,7 +174,8 @@ public actor AgentRuntime {
         conversation: Conversation,
         conversationID: UUID,
         completedToolSteps: Int,
-        contextSnapshot: ModelContextSnapshot?
+        contextSnapshot: ModelContextSnapshot?,
+        transientToolEvents: [UUID: ToolHistoryEvent]
     ) async throws -> RuntimeOutcome {
         phase = .waitingForModel
 
@@ -177,9 +186,13 @@ public actor AgentRuntime {
             tools = []
         }
 
+        let visibleMessages = try modelMessages(
+            from: conversation.messages,
+            transientToolEvents: transientToolEvents
+        )
         let turn = try await model.respond(
             to: ModelRequest(
-                messages: conversation.messages,
+                messages: visibleMessages,
                 availableTools: tools,
                 contextSnapshot: contextSnapshot
             )
@@ -232,20 +245,24 @@ public actor AgentRuntime {
                     call: call,
                     request: request,
                     completedToolSteps: completedToolSteps,
-                    contextSnapshot: contextSnapshot
+                    contextSnapshot: contextSnapshot,
+                    transientToolEvents: transientToolEvents
                 )
 
             case .success(let success):
-                let updated = try await persistToolSuccess(
+                let persisted = try await persistToolSuccess(
                     success,
                     call: call,
                     in: conversation
                 )
+                var transient = transientToolEvents
+                transient[call.id] = persisted.transientEvent
                 return try await continueRun(
-                    conversation: updated,
+                    conversation: persisted.conversation,
                     conversationID: conversationID,
                     completedToolSteps: completedToolSteps + 1,
-                    contextSnapshot: contextSnapshot
+                    contextSnapshot: contextSnapshot,
+                    transientToolEvents: transient
                 )
             }
         }
@@ -257,7 +274,8 @@ public actor AgentRuntime {
         call: ToolCall,
         request: PermissionRequest,
         completedToolSteps: Int,
-        contextSnapshot: ModelContextSnapshot?
+        contextSnapshot: ModelContextSnapshot?,
+        transientToolEvents: [UUID: ToolHistoryEvent]
     ) -> RuntimeOutcome {
         let pendingID = UUID()
         let approval = PendingToolApproval(
@@ -274,7 +292,8 @@ public actor AgentRuntime {
             conversation: conversation,
             call: call,
             completedToolSteps: completedToolSteps,
-            contextSnapshot: contextSnapshot
+            contextSnapshot: contextSnapshot,
+            transientToolEvents: transientToolEvents
         )
         phase = .awaitingPermission
         return .permissionRequired(approval)
@@ -284,28 +303,45 @@ public actor AgentRuntime {
         _ success: ToolExecutionSuccess,
         call: ToolCall,
         in conversation: Conversation
-    ) async throws -> Conversation {
-        let event = ToolHistoryEvent(
+    ) async throws -> PersistedToolEvent {
+        let durableArguments = try await durableHistoryArguments(for: call)
+        let transientArguments = try decodeToolArguments(call.arguments)
+
+        let durableEvent = ToolHistoryEvent(
             status: .success,
             callID: call.id,
             providerCallID: call.providerCallID,
             tool: success.descriptor.name,
             version: success.descriptor.version,
-            arguments: try await durableHistoryArguments(for: call),
+            arguments: durableArguments,
+            data: success.historyData,
+            warnings: success.warnings,
+            metadata: success.metadata,
+            detail: nil
+        )
+        let transientEvent = ToolHistoryEvent(
+            status: .success,
+            callID: call.id,
+            providerCallID: call.providerCallID,
+            tool: success.descriptor.name,
+            version: success.descriptor.version,
+            arguments: transientArguments,
             data: success.data,
             warnings: success.warnings,
             metadata: success.metadata,
             detail: nil
         )
-        return try await appendToolEvent(event, to: conversation)
+        let updated = try await appendToolEvent(durableEvent, to: conversation)
+        return PersistedToolEvent(conversation: updated, transientEvent: transientEvent)
     }
 
     private func persistToolDenial(
         call: ToolCall,
         request: PermissionRequest,
         in conversation: Conversation
-    ) async throws -> Conversation {
-        let event = ToolHistoryEvent(
+    ) async throws -> PersistedToolEvent {
+        let detail = "User denied \(request.capability.rawValue) for \(request.resource.identifier)."
+        let durableEvent = ToolHistoryEvent(
             status: .denied,
             callID: call.id,
             providerCallID: call.providerCallID,
@@ -315,9 +351,51 @@ public actor AgentRuntime {
             data: nil,
             warnings: [],
             metadata: [:],
-            detail: "User denied \(request.capability.rawValue) for \(request.resource.identifier)."
+            detail: detail
         )
-        return try await appendToolEvent(event, to: conversation)
+        let transientEvent = ToolHistoryEvent(
+            status: .denied,
+            callID: call.id,
+            providerCallID: call.providerCallID,
+            tool: call.name,
+            version: call.version,
+            arguments: try decodeToolArguments(call.arguments),
+            data: nil,
+            warnings: [],
+            metadata: [:],
+            detail: detail
+        )
+        let updated = try await appendToolEvent(durableEvent, to: conversation)
+        return PersistedToolEvent(conversation: updated, transientEvent: transientEvent)
+    }
+
+    private func modelMessages(
+        from durableMessages: [ChatMessage],
+        transientToolEvents: [UUID: ToolHistoryEvent]
+    ) throws -> [ChatMessage] {
+        guard !transientToolEvents.isEmpty else { return durableMessages }
+
+        return try durableMessages.map { message in
+            guard
+                message.role == .tool,
+                let data = message.content.data(using: .utf8),
+                let durableEvent = try? JSONDecoder().decode(ToolHistoryEvent.self, from: data),
+                let transientEvent = transientToolEvents[durableEvent.callID]
+            else {
+                return message
+            }
+
+            let transientData = try JSONEncoder().encode(transientEvent)
+            guard let content = String(data: transientData, encoding: .utf8) else {
+                throw AgentRuntimeError.toolEventEncodingFailed
+            }
+            return ChatMessage(
+                id: message.id,
+                role: message.role,
+                content: content,
+                createdAt: message.createdAt
+            )
+        }
     }
 
     private func durableHistoryArguments(for call: ToolCall) async throws -> JSONValue {
@@ -375,6 +453,12 @@ private struct PendingExecution: Sendable {
     let call: ToolCall
     let completedToolSteps: Int
     let contextSnapshot: ModelContextSnapshot?
+    let transientToolEvents: [UUID: ToolHistoryEvent]
+}
+
+private struct PersistedToolEvent: Sendable {
+    let conversation: Conversation
+    let transientEvent: ToolHistoryEvent
 }
 
 public enum AgentRuntimeError: Error, CustomStringConvertible, Sendable {
