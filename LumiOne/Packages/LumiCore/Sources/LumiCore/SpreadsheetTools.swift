@@ -211,6 +211,26 @@ public struct SpreadsheetInspectTool: Tool {
         ]
     }
 
+    /// Row values are available to the model only in the current tool turn.
+    /// Durable conversation history keeps structural metadata but not the cells.
+    public func historyOutput(
+        for input: SpreadsheetInspectInput,
+        output: SpreadsheetInspectOutput
+    ) throws -> JSONValue {
+        .object([
+            "resourceID": .string(output.resourceID.rawValue),
+            "displayName": .string(output.displayName),
+            "format": .string(output.format.rawValue),
+            "tableID": .string(output.tableID.rawValue),
+            "rowCount": .number(Double(output.rowCount)),
+            "columnCount": .number(Double(output.columnCount)),
+            "previewRowsReturned": .number(Double(output.preview.count)),
+            "previewTruncated": .bool(output.previewTruncated),
+            "preview": .string("<redacted:spreadsheet-preview>"),
+            "sourceByteCount": .number(Double(output.sourceByteCount))
+        ])
+    }
+
     private func validatePreviewRows(_ count: Int) throws {
         guard (1...50).contains(count) else {
             throw SpreadsheetError.invalidReadLimit("previewRows must be between 1 and 50")
