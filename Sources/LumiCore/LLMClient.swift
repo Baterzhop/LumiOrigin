@@ -18,11 +18,69 @@ public enum LLMError: Error, LocalizedError, Sendable {
 }
 
 public protocol LLMClient: Sendable {
-    func complete(
-        messages: [ChatMessage],
-        systemPrompt: String,
-        profile: PromptProfile
-    ) async throws -> ModelResponse
+    func complete(_ request: ModelRequest) async throws -> ModelResponse
+    func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error>
+}
+
+public extension LLMClient {
+    func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let response = try await complete(request)
+                    try Task.checkCancellation()
+                    if !response.content.isEmpty {
+                        continuation.yield(.token(response.content))
+                    }
+                    continuation.yield(.completed(response))
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: LumiRuntimeError.cancelled)
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: LumiRuntimeError.cancelled)
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
+    }
+}
+
+private struct OllamaWireMessage: Codable {
+    let role: String
+    let content: String
+}
+
+private struct OllamaOptions: Codable {
+    let temperature: Double
+    let top_p: Double
+    let num_predict: Int
+}
+
+private struct OllamaRequestBody: Codable {
+    let model: String
+    let messages: [OllamaWireMessage]
+    let stream: Bool
+    let options: OllamaOptions
+}
+
+private struct OllamaResponseBody: Codable {
+    struct ResponseMessage: Codable {
+        let content: String
+    }
+
+    let model: String?
+    let message: ResponseMessage?
+    let done: Bool?
+    let done_reason: String?
+    let prompt_eval_count: Int?
+    let eval_count: Int?
 }
 
 public struct OllamaClient: LLMClient, Sendable {
@@ -42,46 +100,177 @@ public struct OllamaClient: LLMClient, Sendable {
         self.timeout = timeout
     }
 
-    public func complete(
-        messages: [ChatMessage],
-        systemPrompt: String,
-        profile: PromptProfile
-    ) async throws -> ModelResponse {
-        struct WireMessage: Codable {
-            let role: String
-            let content: String
-        }
-        struct Options: Codable {
-            let temperature: Double
-            let top_p: Double
-            let num_predict: Int
-        }
-        struct RequestBody: Codable {
-            let model: String
-            let messages: [WireMessage]
-            let stream: Bool
-            let options: Options
-        }
-        struct ResponseBody: Codable {
-            struct ResponseMessage: Codable { let content: String }
-            let model: String?
-            let message: ResponseMessage?
-            let done_reason: String?
-            let prompt_eval_count: Int?
-            let eval_count: Int?
+    public func complete(_ modelRequest: ModelRequest) async throws -> ModelResponse {
+        let request = try makeURLRequest(modelRequest, stream: false)
+        let startedAt = Date()
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
+
+        try validateHTTPResponse(response)
+
+        let decoded: OllamaResponseBody
+        do {
+            decoded = try JSONDecoder().decode(OllamaResponseBody.self, from: data)
+        } catch {
+            throw LumiRuntimeError.decodingFailure(error.localizedDescription)
         }
 
-        let wireMessages = [WireMessage(role: "system", content: systemPrompt)] + messages.map {
-            WireMessage(role: $0.role.rawValue, content: $0.content)
+        let content = decoded.message?.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !content.isEmpty else { throw LLMError.emptyResponse }
+
+        return ModelResponse(
+            content: content,
+            runtime: RuntimeMetadata(
+                provider: .ollama,
+                model: decoded.model ?? model,
+                fallbackUsed: false,
+                latencyMs: latencyMs,
+                finishReason: finishReason(from: decoded.done_reason),
+                usage: ModelUsage(
+                    inputTokens: decoded.prompt_eval_count,
+                    outputTokens: decoded.eval_count
+                )
+            )
+        )
+    }
+
+    public func stream(_ modelRequest: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
+#if os(macOS)
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let request = try makeURLRequest(modelRequest, stream: true)
+                    let startedAt = Date()
+                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    try validateHTTPResponse(response)
+
+                    var lineBuffer = Data()
+                    var fullContent = ""
+                    var responseModel = model
+                    var responseUsage = ModelUsage()
+                    var responseFinishReason: ModelFinishReason = .unknown
+
+                    func consumeLine(_ rawLine: Data) throws {
+                        var line = rawLine
+                        if line.last == 13 {
+                            line.removeLast()
+                        }
+                        guard !line.isEmpty else { return }
+
+                        let chunk: OllamaResponseBody
+                        do {
+                            chunk = try JSONDecoder().decode(OllamaResponseBody.self, from: line)
+                        } catch {
+                            throw LumiRuntimeError.decodingFailure(error.localizedDescription)
+                        }
+
+                        if let modelName = chunk.model, !modelName.isEmpty {
+                            responseModel = modelName
+                        }
+
+                        let delta = chunk.message?.content ?? ""
+                        if !delta.isEmpty {
+                            fullContent += delta
+                            continuation.yield(.token(delta))
+                        }
+
+                        if chunk.done == true {
+                            responseFinishReason = finishReason(from: chunk.done_reason)
+                            responseUsage = ModelUsage(
+                                inputTokens: chunk.prompt_eval_count,
+                                outputTokens: chunk.eval_count
+                            )
+                        }
+                    }
+
+                    for try await byte in bytes {
+                        try Task.checkCancellation()
+                        if byte == 10 {
+                            try consumeLine(lineBuffer)
+                            lineBuffer.removeAll(keepingCapacity: true)
+                        } else {
+                            lineBuffer.append(byte)
+                        }
+                    }
+
+                    if !lineBuffer.isEmpty {
+                        try consumeLine(lineBuffer)
+                    }
+
+                    try Task.checkCancellation()
+                    let cleanContent = fullContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !cleanContent.isEmpty else { throw LLMError.emptyResponse }
+
+                    let response = ModelResponse(
+                        content: cleanContent,
+                        runtime: RuntimeMetadata(
+                            provider: .ollama,
+                            model: responseModel,
+                            fallbackUsed: false,
+                            latencyMs: Int(Date().timeIntervalSince(startedAt) * 1_000),
+                            finishReason: responseFinishReason,
+                            usage: responseUsage
+                        )
+                    )
+                    continuation.yield(.completed(response))
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: LumiRuntimeError.cancelled)
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: LumiRuntimeError.cancelled)
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
         }
-        let payload = RequestBody(
+#else
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let response = try await complete(modelRequest)
+                    try Task.checkCancellation()
+                    continuation.yield(.token(response.content))
+                    continuation.yield(.completed(response))
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: LumiRuntimeError.cancelled)
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: LumiRuntimeError.cancelled)
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
+#endif
+    }
+
+    private func makeURLRequest(_ modelRequest: ModelRequest, stream: Bool) throws -> URLRequest {
+        let wireMessages = [
+            OllamaWireMessage(role: "system", content: modelRequest.systemPrompt)
+        ] + modelRequest.messages.map {
+            OllamaWireMessage(role: $0.role.rawValue, content: $0.content)
+        }
+
+        let payload = OllamaRequestBody(
             model: model,
             messages: wireMessages,
-            stream: false,
-            options: Options(
-                temperature: profile.temperature,
-                top_p: profile.topP,
-                num_predict: profile.maxTokens
+            stream: stream,
+            options: OllamaOptions(
+                temperature: modelRequest.profile.temperature,
+                top_p: modelRequest.profile.topP,
+                num_predict: modelRequest.profile.maxTokens
             )
         )
 
@@ -90,17 +279,17 @@ public struct OllamaClient: LLMClient, Sendable {
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(payload)
+        return request
+    }
 
-        let startedAt = Date()
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
-
+    private func validateHTTPResponse(_ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse else {
             throw LumiRuntimeError.invalidResponse
         }
+
         switch http.statusCode {
         case 200..<300:
-            break
+            return
         case 401, 403:
             throw LumiRuntimeError.unauthorized
         case 404:
@@ -112,51 +301,23 @@ public struct OllamaClient: LLMClient, Sendable {
         default:
             throw LLMError.httpStatus(http.statusCode)
         }
+    }
 
-        let decoded: ResponseBody
-        do {
-            decoded = try JSONDecoder().decode(ResponseBody.self, from: data)
-        } catch {
-            throw LumiRuntimeError.decodingFailure(error.localizedDescription)
+    private func finishReason(from rawValue: String?) -> ModelFinishReason {
+        switch rawValue?.lowercased() {
+        case "stop": return .stop
+        case "length": return .length
+        case nil: return .unknown
+        default: return .unknown
         }
-
-        let content = decoded.message?.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !content.isEmpty else { throw LLMError.emptyResponse }
-
-        let finishReason: ModelFinishReason
-        switch decoded.done_reason?.lowercased() {
-        case "stop": finishReason = .stop
-        case "length": finishReason = .length
-        case nil: finishReason = .unknown
-        default: finishReason = .unknown
-        }
-
-        return ModelResponse(
-            content: content,
-            runtime: RuntimeMetadata(
-                provider: .ollama,
-                model: decoded.model ?? model,
-                fallbackUsed: false,
-                latencyMs: latencyMs,
-                finishReason: finishReason,
-                usage: ModelUsage(
-                    inputTokens: decoded.prompt_eval_count,
-                    outputTokens: decoded.eval_count
-                )
-            )
-        )
     }
 }
 
 public struct LocalFallbackClient: LLMClient, Sendable {
     public init() {}
 
-    public func complete(
-        messages: [ChatMessage],
-        systemPrompt: String,
-        profile: PromptProfile
-    ) async throws -> ModelResponse {
-        let prompt = messages.last(where: { $0.role == .user })?.content ?? ""
+    public func complete(_ request: ModelRequest) async throws -> ModelResponse {
+        let prompt = request.messages.last(where: { $0.role == .user })?.content ?? ""
         let content: String
         if prompt.isEmpty {
             content = "Lumi is ready."
@@ -186,17 +347,71 @@ public struct ResilientLLMClient: LLMClient, Sendable {
         self.fallback = fallback
     }
 
-    public func complete(
-        messages: [ChatMessage],
-        systemPrompt: String,
-        profile: PromptProfile
-    ) async throws -> ModelResponse {
+    public func complete(_ request: ModelRequest) async throws -> ModelResponse {
         do {
-            return try await primary.complete(messages: messages, systemPrompt: systemPrompt, profile: profile)
-        } catch is CancellationError {
-            throw LumiRuntimeError.cancelled
+            return try await primary.complete(request)
         } catch {
-            return try await fallback.complete(messages: messages, systemPrompt: systemPrompt, profile: profile)
+            if Task.isCancelled {
+                throw LumiRuntimeError.cancelled
+            }
+            return try await fallback.complete(request)
+        }
+    }
+
+    public func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                var emittedPrimaryContent = false
+
+                do {
+                    for try await event in primary.stream(request) {
+                        try Task.checkCancellation()
+                        switch event {
+                        case .token(let token):
+                            emittedPrimaryContent = true
+                            continuation.yield(.token(token))
+                        case .completed(let response):
+                            continuation.yield(.completed(response))
+                            continuation.finish()
+                            return
+                        }
+                    }
+
+                    if emittedPrimaryContent {
+                        throw LumiRuntimeError.invalidResponse
+                    }
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: LumiRuntimeError.cancelled)
+                        return
+                    }
+
+                    if emittedPrimaryContent {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+                }
+
+                do {
+                    for try await event in fallback.stream(request) {
+                        try Task.checkCancellation()
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: LumiRuntimeError.cancelled)
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: LumiRuntimeError.cancelled)
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
         }
     }
 }
