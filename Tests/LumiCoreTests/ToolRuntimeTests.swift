@@ -92,7 +92,8 @@ final class ToolRuntimeTests: XCTestCase {
         )
 
         XCTAssertEqual(result.status, .denied)
-        XCTAssertFalse(await recorder.wasExecuted())
+        let executed = await recorder.wasExecuted()
+        XCTAssertFalse(executed)
     }
 
     func testReadOnlyMediumRiskToolRequiresMatchingConfirmation() async {
@@ -183,7 +184,8 @@ final class ToolRuntimeTests: XCTestCase {
 
         let reply = await engine.respond(to: "run the script with a tool")
         XCTAssertTrue(reply.classification.capabilities.contains(.tools))
-        XCTAssertFalse(await recorder.wasExecuted())
+        let executed = await recorder.wasExecuted()
+        XCTAssertFalse(executed)
         let prompt = await promptRecorder.lastSystemPrompt()
         XCTAssertTrue(prompt?.contains("cannot invoke tools automatically") == true)
     }
