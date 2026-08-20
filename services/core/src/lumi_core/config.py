@@ -5,19 +5,37 @@ from pathlib import Path
 import os
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     database_path: Path
     ollama_url: str
     ollama_model: str
     model_timeout_seconds: float
+    ollama_embed_url: str
+    embedding_model: str
+    rag_dense_enabled: bool
+    reranker_model: str | None
+    max_upload_bytes: int
 
     @classmethod
     def from_env(cls) -> "Settings":
         data_dir = Path(os.getenv("LUMI_DATA_DIR", ".lumi-data")).expanduser()
+        reranker = os.getenv("LUMI_RERANKER_MODEL", "").strip() or None
         return cls(
             database_path=Path(os.getenv("LUMI_DATABASE_PATH", str(data_dir / "lumi.sqlite3"))).expanduser(),
             ollama_url=os.getenv("LUMI_OLLAMA_URL", "http://127.0.0.1:11434/api/chat"),
             ollama_model=os.getenv("LUMI_OLLAMA_MODEL", "llama3.2"),
             model_timeout_seconds=float(os.getenv("LUMI_MODEL_TIMEOUT", "45")),
+            ollama_embed_url=os.getenv("LUMI_OLLAMA_EMBED_URL", "http://127.0.0.1:11434/api/embed"),
+            embedding_model=os.getenv("LUMI_EMBEDDING_MODEL", "embeddinggemma"),
+            rag_dense_enabled=_env_bool("LUMI_RAG_DENSE", True),
+            reranker_model=reranker,
+            max_upload_bytes=int(os.getenv("LUMI_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))),
         )
