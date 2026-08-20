@@ -11,7 +11,7 @@ struct DeveloperAgentView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Lumi Developer Agent")
                         .font(.title2.weight(.semibold))
-                    Text("Plan → explicit approval → isolated branch → checks → explicit publish approval → draft PR")
+                    Text("Plan → explicit approval → isolated branch → validation → explicit publish approval → draft PR")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -48,7 +48,7 @@ struct DeveloperAgentView: View {
                 }
                 .font(.caption)
                 if !status.localChecksEnabled {
-                    Text("Local validation is disabled by default because tests execute code from the developer checkout. If a proposal requires checks, Lumi will stop at validation_incomplete and will not allow publishing.")
+                    Text("Local validation is disabled by default because tests execute code from the developer checkout. If a proposal requires checks, Lumi stops at validation_incomplete and blocks publishing.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -155,7 +155,7 @@ struct DeveloperAgentView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                             if model.status?.localChecksEnabled != true {
-                                Text("Local checks are currently disabled. Approving the plan may apply the change on an isolated branch, but publishing will remain blocked until required checks can run successfully.")
+                                Text("Local checks are currently disabled. Approving the plan may apply the change on an isolated branch, but publishing remains blocked until required checks can run successfully.")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
@@ -227,6 +227,11 @@ struct DeveloperAgentView: View {
                 Button("Approve exact plan") { model.approvePlan() }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isWorking)
+            } else if ["validation_failed", "validation_incomplete"].contains(session.status) {
+                Button("Run validation again") { model.revalidate() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isWorking || model.status?.localChecksEnabled != true)
+                    .help("Runs only Lumi's fixed validation profiles; requires LUMI_DEV_ALLOW_LOCAL_CHECKS=true")
             } else if ["ready_to_publish", "publish_failed"].contains(session.status) {
                 Button("Publish branch + create draft PR") { model.publish() }
                     .buttonStyle(.borderedProminent)
