@@ -128,6 +128,7 @@ public struct LumiReply: Sendable {
     public let profile: String
     public let runtime: RuntimeMetadata
     public let contextBudget: ContextBudgetReport
+    public let citationReport: CitationReport
 
     public init(
         message: ChatMessage,
@@ -135,7 +136,8 @@ public struct LumiReply: Sendable {
         context: [KnowledgeHit],
         profile: String,
         runtime: RuntimeMetadata,
-        contextBudget: ContextBudgetReport
+        contextBudget: ContextBudgetReport,
+        citationReport: CitationReport = .empty
     ) {
         self.message = message
         self.intent = intent
@@ -143,5 +145,6 @@ public struct LumiReply: Sendable {
         self.profile = profile
         self.runtime = runtime
         self.contextBudget = contextBudget
+        self.citationReport = citationReport
     }
 }
