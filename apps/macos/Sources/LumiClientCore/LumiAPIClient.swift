@@ -67,6 +67,41 @@ public struct LumiAPIClient: Sendable {
         return try JSONDecoder().decode(KnowledgeUploadResponse.self, from: data)
     }
 
+    public func memories() async throws -> [MemoryRecordDTO] {
+        let (data, response) = try await URLSession.shared.data(from: endpoint("v1", "memories"))
+        try validate(response)
+        return try JSONDecoder().decode(MemoriesResponse.self, from: data).memories
+    }
+
+    public func createMemory(content: String, kind: String = "fact", title: String? = nil) async throws -> MemoryRecordDTO {
+        let payload = MemoryCreateRequestDTO(content: content, kind: kind, title: title, approvedByUser: true)
+        let envelope = try await postJSON(endpoint("v1", "memories"), body: payload, response: MemoryEnvelopeResponse.self)
+        return envelope.memory
+    }
+
+    public func updateMemory(
+        _ memoryID: String,
+        content: String? = nil,
+        kind: String? = nil,
+        title: String? = nil
+    ) async throws -> MemoryRecordDTO {
+        let payload = MemoryUpdateRequestDTO(content: content, kind: kind, title: title)
+        let envelope = try await sendJSON(
+            endpoint("v1", "memories", memoryID),
+            method: "PATCH",
+            body: payload,
+            response: MemoryEnvelopeResponse.self
+        )
+        return envelope.memory
+    }
+
+    public func deleteMemory(_ memoryID: String) async throws {
+        var request = URLRequest(url: endpoint("v1", "memories", memoryID))
+        request.httpMethod = "DELETE"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        try validate(response)
+    }
+
     public func createTask(
         goal: String,
         conversationID: String?,
@@ -156,8 +191,17 @@ public struct LumiAPIClient: Sendable {
         body: Body,
         response: Response.Type
     ) async throws -> Response {
+        try await sendJSON(url, method: "POST", body: body, response: response)
+    }
+
+    private func sendJSON<Body: Encodable, Response: Decodable>(
+        _ url: URL,
+        method: String,
+        body: Body,
+        response: Response.Type
+    ) async throws -> Response {
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         let (data, urlResponse) = try await URLSession.shared.data(for: request)
