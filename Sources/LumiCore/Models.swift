@@ -124,6 +124,7 @@ public struct ReflectionEvent: Identifiable, Codable, Hashable, Sendable {
 public struct LumiReply: Sendable {
     public let message: ChatMessage
     public let intent: LumiIntent
+    public let classification: RequestClassification
     public let context: [KnowledgeHit]
     public let memories: [MemoryHit]
     public let profile: String
@@ -134,6 +135,12 @@ public struct LumiReply: Sendable {
     public init(
         message: ChatMessage,
         intent: LumiIntent,
+        classification: RequestClassification = RequestClassification(
+            mode: .direct,
+            capabilities: [.reasoning],
+            confidence: 1,
+            risk: .low
+        ),
         context: [KnowledgeHit],
         memories: [MemoryHit] = [],
         profile: String,
@@ -143,6 +150,7 @@ public struct LumiReply: Sendable {
     ) {
         self.message = message
         self.intent = intent
+        self.classification = classification
         self.context = context
         self.memories = memories
         self.profile = profile
