@@ -161,14 +161,17 @@ private struct ContentView: View {
             }
             .overlay {
                 if model.messages.isEmpty {
-                    ContentUnavailableView(
-                        "Lumi One",
-                        systemImage: "sparkles",
-                        description: Text("The runtime is online. Start a conversation.")
-                    )
+                    VStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.largeTitle)
+                        Text("Lumi One")
+                            .font(.title2)
+                        Text("The runtime is online. Start a conversation.")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
-            .onChange(of: model.messages.count) { _, _ in
+            .onChange(of: model.messages.count) { _ in
                 if let last = model.messages.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
