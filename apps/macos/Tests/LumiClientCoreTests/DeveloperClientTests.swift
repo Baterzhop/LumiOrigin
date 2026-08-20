@@ -4,13 +4,14 @@ import XCTest
 
 final class DeveloperClientTests: XCTestCase {
     func testDecodesDeveloperStatus() throws {
-        let data = Data(#"{"enabled":true,"repository_ok":true,"repository_root":"/tmp/lumi-dev","base_branch":"main","current_branch":"main","clean":true,"publisher_configured":false,"error":null}"#.utf8)
+        let data = Data(#"{"enabled":true,"repository_ok":true,"repository_root":"/tmp/lumi-dev","base_branch":"main","current_branch":"main","clean":true,"publisher_configured":false,"local_checks_enabled":false,"error":null}"#.utf8)
         let status = try JSONDecoder().decode(DeveloperStatusDTO.self, from: data)
         XCTAssertTrue(status.enabled)
         XCTAssertTrue(status.repositoryOK)
         XCTAssertEqual(status.baseBranch, "main")
         XCTAssertEqual(status.currentBranch, "main")
         XCTAssertFalse(status.publisherConfigured)
+        XCTAssertFalse(status.localChecksEnabled)
     }
 
     func testDecodesDeveloperSessionProposalAndValidation() throws {
