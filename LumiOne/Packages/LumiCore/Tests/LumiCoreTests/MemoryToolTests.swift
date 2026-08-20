@@ -90,6 +90,60 @@ final class MemoryToolTests: XCTestCase {
         XCTAssertNil(city)
     }
 
+    func testGrantForOneMemoryValueCannotAuthorizeChangedValueOnSameKey() async throws {
+        let fixture = try MemoryToolFixture()
+        defer { fixture.cleanup() }
+
+        let approvedCall = try ToolCall.encoding(
+            name: "memory.remember",
+            version: "1",
+            input: RememberMemoryInput(
+                key: "profile.name",
+                kind: .profile,
+                value: "Alice",
+                confidence: 1.0
+            )
+        )
+        let changedCall = try ToolCall.encoding(
+            name: "memory.remember",
+            version: "1",
+            input: RememberMemoryInput(
+                key: "profile.name",
+                kind: .profile,
+                value: "Mallory",
+                confidence: 1.0
+            )
+        )
+
+        let first = try await fixture.runtime.execute(approvedCall)
+        guard case .permissionRequired(let approvedRequest) = first else {
+            return XCTFail("Expected approval request for the original exact value")
+        }
+        XCTAssertEqual(approvedRequest.details["proposedValue"], "Alice")
+        _ = await fixture.runtime.grant(approvedRequest, duration: .once)
+
+        // Same capability and same logical memory key, but a changed proposed
+        // value must not consume or reuse the approval for Alice.
+        let changed = try await fixture.runtime.execute(changedCall)
+        guard case .permissionRequired(let changedRequest) = changed else {
+            return XCTFail("Changed memory value must require a new approval")
+        }
+        XCTAssertEqual(changedRequest.resource, approvedRequest.resource)
+        XCTAssertEqual(changedRequest.details["proposedValue"], "Mallory")
+        XCTAssertNotEqual(changedRequest.details, approvedRequest.details)
+        XCTAssertNil(try await fixture.service.load(key: "profile.name"))
+
+        // The original approval remains bound to the exact original operation.
+        let original = try await fixture.runtime.execute(approvedCall)
+        guard case .success = original else {
+            return XCTFail("Original exact operation should still match its grant")
+        }
+        XCTAssertEqual(
+            try await fixture.service.load(key: "profile.name")?.value,
+            "Alice"
+        )
+    }
+
     func testApprovedReplacementFailsIfRevisionChangesBeforeExecution() async throws {
         let fixture = try MemoryToolFixture()
         defer { fixture.cleanup() }
