@@ -68,6 +68,16 @@ public struct ToolDescriptor: Hashable, Codable, Sendable {
     public var registryKey: String { "\(name)@\(version)" }
 }
 
+public struct ToolWarning: Codable, Equatable, Sendable {
+    public let code: String
+    public let message: String
+
+    public init(code: String, message: String) {
+        self.code = code
+        self.message = message
+    }
+}
+
 public protocol Tool: Sendable {
     associatedtype Input: Codable & Sendable
     associatedtype Output: Codable & Sendable
@@ -76,6 +86,13 @@ public protocol Tool: Sendable {
 
     func resource(for input: Input) throws -> ResourceScope
     func execute(_ input: Input) async throws -> Output
+    func warnings(for input: Input, output: Output) -> [ToolWarning]
+    func metadata(for input: Input, output: Output) -> [String: JSONValue]
+}
+
+public extension Tool {
+    func warnings(for input: Input, output: Output) -> [ToolWarning] { [] }
+    func metadata(for input: Input, output: Output) -> [String: JSONValue] { [:] }
 }
 
 public struct ToolCall: Identifiable, Equatable, Sendable {
@@ -113,18 +130,21 @@ public struct ToolExecutionSuccess: Sendable, Equatable {
     public let callID: UUID
     public let descriptor: ToolDescriptor
     public let data: JSONValue
-    public let warnings: [String]
+    public let warnings: [ToolWarning]
+    public let metadata: [String: JSONValue]
 
     public init(
         callID: UUID,
         descriptor: ToolDescriptor,
         data: JSONValue,
-        warnings: [String] = []
+        warnings: [ToolWarning] = [],
+        metadata: [String: JSONValue] = [:]
     ) {
         self.callID = callID
         self.descriptor = descriptor
         self.data = data
         self.warnings = warnings
+        self.metadata = metadata
     }
 }
 
@@ -153,11 +173,17 @@ public enum ToolRuntimeError: Error, CustomStringConvertible, Sendable {
     }
 }
 
+private struct ErasedToolResult: Sendable {
+    let data: JSONValue
+    let warnings: [ToolWarning]
+    let metadata: [String: JSONValue]
+}
+
 public struct AnyTool: Sendable {
     public let descriptor: ToolDescriptor
 
     private let resourceResolver: @Sendable (Data) throws -> ResourceScope
-    private let executor: @Sendable (Data) async throws -> JSONValue
+    private let executor: @Sendable (Data) async throws -> ErasedToolResult
 
     public init<T: Tool>(_ tool: T) {
         descriptor = T.descriptor
@@ -188,7 +214,12 @@ public struct AnyTool: Sendable {
             let output = try await tool.execute(input)
             do {
                 let encoded = try JSONEncoder().encode(output)
-                return try JSONDecoder().decode(JSONValue.self, from: encoded)
+                let structured = try JSONDecoder().decode(JSONValue.self, from: encoded)
+                return ErasedToolResult(
+                    data: structured,
+                    warnings: tool.warnings(for: input, output: output),
+                    metadata: tool.metadata(for: input, output: output)
+                )
             } catch {
                 throw ToolRuntimeError.invalidOutput(
                     tool: T.descriptor.registryKey,
@@ -206,7 +237,7 @@ public struct AnyTool: Sendable {
         )
     }
 
-    func execute(arguments: Data) async throws -> JSONValue {
+    func execute(arguments: Data) async throws -> ErasedToolResult {
         try await executor(arguments)
     }
 }
@@ -266,12 +297,14 @@ public actor ToolRuntime {
             return .permissionRequired(request)
         }
 
-        let data = try await tool.execute(arguments: call.arguments)
+        let result = try await tool.execute(arguments: call.arguments)
         return .success(
             ToolExecutionSuccess(
                 callID: call.id,
                 descriptor: tool.descriptor,
-                data: data
+                data: result.data,
+                warnings: result.warnings,
+                metadata: result.metadata
             )
         )
     }

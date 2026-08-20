@@ -93,6 +93,17 @@ public struct ReadTextFileTool: Tool {
         )
     }
 
+    public func metadata(
+        for input: ReadTextFileInput,
+        output: ReadTextFileOutput
+    ) -> [String: JSONValue] {
+        [
+            "encoding": .string("utf-8"),
+            "bytesRead": .number(Double(output.byteCount)),
+            "truncated": .bool(output.truncated)
+        ]
+    }
+
     private static func canonicalURL(path: String) -> URL {
         URL(fileURLWithPath: path)
             .standardizedFileURL

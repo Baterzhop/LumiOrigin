@@ -42,6 +42,9 @@ final class ToolRuntimeTests: XCTestCase {
         XCTAssertEqual(object["truncated"], .bool(false))
         XCTAssertEqual(result.descriptor.name, "file.readText")
         XCTAssertTrue(result.warnings.isEmpty)
+        XCTAssertEqual(result.metadata["encoding"], .string("utf-8"))
+        XCTAssertEqual(result.metadata["bytesRead"], .number(10))
+        XCTAssertEqual(result.metadata["truncated"], .bool(false))
     }
 
     func testOneTimeGrantIsConsumed() async throws {
@@ -161,6 +164,32 @@ final class ToolRuntimeTests: XCTestCase {
         let permissions = PermissionEngine()
         let grants = await permissions.activeGrants()
         XCTAssertTrue(grants.isEmpty)
+    }
+
+    func testUserOrModelTextCannotActAsPermission() async {
+        let permissions = PermissionEngine()
+        let request = PermissionRequest(
+            capability: .readUserFile,
+            resource: .file("/tmp/not-authorized.txt"),
+            reason: "The user said in chat: yes, read everything"
+        )
+
+        let authorized = await permissions.authorize(request)
+        let grants = await permissions.activeGrants()
+        XCTAssertFalse(authorized)
+        XCTAssertTrue(grants.isEmpty)
+    }
+
+    func testDuplicateToolRegistrationFailsClosed() throws {
+        do {
+            _ = try ToolRegistry(tools: [
+                AnyTool(ReadTextFileTool()),
+                AnyTool(ReadTextFileTool())
+            ])
+            XCTFail("Duplicate tool name/version must be rejected")
+        } catch let error as ToolRuntimeError {
+            XCTAssertEqual(error.description, "Tool registry contains duplicate tool file.readText@1.")
+        }
     }
 
     private func makeRuntime(permissions: PermissionEngine) throws -> ToolRuntime {
