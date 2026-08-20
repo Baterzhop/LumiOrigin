@@ -48,7 +48,7 @@ final class ChatViewModel: ObservableObject {
 
     func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isSending else { return }
+        guard !text.isEmpty, !isSending, !isAgentRunning else { return }
 
         input = ""
         streamingText = ""
@@ -111,7 +111,7 @@ final class ChatViewModel: ObservableObject {
 
     func startAgent() {
         let goal = agentGoal.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !goal.isEmpty, !isAgentRunning else { return }
+        guard !goal.isEmpty, !isAgentRunning, !isSending else { return }
 
         agentError = nil
         isAgentRunning = true
@@ -129,6 +129,7 @@ final class ChatViewModel: ObservableObject {
             } catch is CancellationError {
                 agentError = "Agent operation was cancelled."
                 status = "Agent cancelled"
+                refreshAgentRuns()
             } catch {
                 agentError = error.localizedDescription
                 status = "Agent error"
@@ -148,8 +149,13 @@ final class ChatViewModel: ObservableObject {
     }
 
     func cancelActiveAgent() {
+        if isAgentRunning {
+            agentTask?.cancel()
+            status = "Agent stopping"
+            return
+        }
+
         guard let run = activeAgentRun else { return }
-        agentTask?.cancel()
         agentTask = Task {
             do {
                 let cancelled = try await engine.cancelAgent(runID: run.id)
@@ -296,6 +302,7 @@ final class ChatViewModel: ObservableObject {
             } catch is CancellationError {
                 agentError = "Agent operation was cancelled."
                 status = "Agent cancelled"
+                refreshAgentRuns()
             } catch {
                 agentError = error.localizedDescription
                 status = "Agent error"
