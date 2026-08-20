@@ -11,6 +11,12 @@ final class ChatViewModel: ObservableObject {
     @Published var streamingText = ""
     @Published var selectedProfile = "auto"
     @Published var lastIntent: LumiIntent = .chat
+    @Published var classification = RequestClassification(
+        mode: .direct,
+        capabilities: [.reasoning],
+        confidence: 1,
+        risk: .low
+    )
     @Published var contextHits: [KnowledgeHit] = []
     @Published var relevantMemories: [MemoryHit] = []
     @Published var storedMemories: [MemoryRecord] = []
@@ -61,6 +67,7 @@ final class ChatViewModel: ObservableObject {
                         messages = await engine.messages()
                         streamingText = ""
                         lastIntent = reply.intent
+                        classification = reply.classification
                         contextHits = reply.context
                         relevantMemories = reply.memories
                         contextBudget = reply.contextBudget
@@ -107,6 +114,12 @@ final class ChatViewModel: ObservableObject {
             citationReport = .empty
             streamingText = ""
             lastIntent = .chat
+            classification = RequestClassification(
+                mode: .direct,
+                capabilities: [.reasoning],
+                confidence: 1,
+                risk: .low
+            )
             runtime = nil
             lastError = nil
             status = "Local-first"
