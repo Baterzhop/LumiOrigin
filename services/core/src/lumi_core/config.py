@@ -23,11 +23,14 @@ class Settings:
     rag_dense_enabled: bool
     reranker_model: str | None
     max_upload_bytes: int
+    tool_workspace_root: Path
+    tool_max_read_bytes: int
 
     @classmethod
     def from_env(cls) -> "Settings":
         data_dir = Path(os.getenv("LUMI_DATA_DIR", ".lumi-data")).expanduser()
         reranker = os.getenv("LUMI_RERANKER_MODEL", "").strip() or None
+        workspace = Path(os.getenv("LUMI_TOOL_WORKSPACE", str(data_dir / "workspace"))).expanduser()
         return cls(
             database_path=Path(os.getenv("LUMI_DATABASE_PATH", str(data_dir / "lumi.sqlite3"))).expanduser(),
             ollama_url=os.getenv("LUMI_OLLAMA_URL", "http://127.0.0.1:11434/api/chat"),
@@ -38,4 +41,6 @@ class Settings:
             rag_dense_enabled=_env_bool("LUMI_RAG_DENSE", True),
             reranker_model=reranker,
             max_upload_bytes=int(os.getenv("LUMI_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))),
+            tool_workspace_root=workspace,
+            tool_max_read_bytes=int(os.getenv("LUMI_TOOL_MAX_READ_BYTES", str(512 * 1024))),
         )
