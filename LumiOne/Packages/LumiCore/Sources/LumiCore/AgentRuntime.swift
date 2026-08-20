@@ -37,7 +37,6 @@ public actor AgentRuntime {
         }
 
         guard !hasPendingExecution(for: conversationID) else {
-            // Chat prose is never interpreted as approval for a pending side effect.
             throw AgentRuntimeError.pendingPermissionExists
         }
 
@@ -56,7 +55,7 @@ public actor AgentRuntime {
             conversation.messages.append(userMessage)
             conversation.updatedAt = Date()
 
-            // The user's input is durable before model, retrieval or tool execution starts.
+            // User input is durable before model, retrieval or tool execution.
             phase = .persistingUserMessage
             try await store.saveConversation(conversation)
 
@@ -101,8 +100,6 @@ public actor AgentRuntime {
 
             switch outcome {
             case .permissionRequired(let changedRequest):
-                // The resource may have changed between approval and execution.
-                // Never reuse approval silently, and keep the same evidence snapshot.
                 return suspendForPermission(
                     conversation: pending.conversation,
                     conversationID: pending.conversationID,
@@ -191,10 +188,17 @@ public actor AgentRuntime {
 
         switch turn {
         case .final(let content):
-            let normalized = content.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            let normalized = content.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty else {
                 throw AgentRuntimeError.emptyFinalResponse
             }
+
+            // Validate every [K#] marker before making the response durable.
+            // A hallucinated citation can therefore never be surfaced as trusted.
+            let citations = try GroundedCitationResolver().resolve(
+                in: normalized,
+                context: groundedContext
+            )
 
             var updated = conversation
             let assistantMessage = ChatMessage(role: .assistant, content: normalized)
@@ -208,7 +212,8 @@ public actor AgentRuntime {
             return .completed(
                 RuntimeResponse(
                     conversation: updated,
-                    assistantMessage: assistantMessage
+                    assistantMessage: assistantMessage,
+                    citations: citations
                 )
             )
 
