@@ -13,16 +13,17 @@ final class NativeAgentToolIntegrationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let secret = "NATIVE-INTEGRATION-SECRET"
-        let fileURL = directory.appendingPathComponent("fixture.txt")
-        try Data(secret.utf8).write(to: fileURL)
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(
+            content: secret,
+            displayName: "fixture.txt",
+            locationHint: "/user-selected/fixture.txt"
+        )
 
         let wireName = ReadTextFileTool.descriptor.wireName
-        let escapedPath = fileURL.path
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
         let firstResponse = Data(
             """
-            {"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_integration_1","type":"function","function":{"name":"\(wireName)","arguments":"{\\"path\\":\\"\(escapedPath)\\"}"}}]}}]}
+            {"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_integration_1","type":"function","function":{"name":"\(wireName)","arguments":"{\\"resourceID\\":\\"\(resourceID.rawValue)\\"}"}}]}}]}
             """.utf8
         )
         let secondResponse = Data(
@@ -43,7 +44,7 @@ final class NativeAgentToolIntegrationTests: XCTestCase {
             url: directory.appendingPathComponent("lumi.sqlite3")
         )
         let permissions = PermissionEngine()
-        let registry = try ToolRegistry(tools: [AnyTool(ReadTextFileTool())])
+        let registry = try ToolRegistry(tools: [AnyTool(ReadTextFileTool(broker: broker))])
         let runtime = AgentRuntime(
             store: store,
             model: provider,
@@ -59,12 +60,16 @@ final class NativeAgentToolIntegrationTests: XCTestCase {
             return XCTFail("Native model tool call must suspend for explicit permission")
         }
         XCTAssertEqual(pending.toolName, "file.readText")
-        XCTAssertEqual(pending.permission.resource.identifier, fileURL.path)
+        XCTAssertEqual(pending.toolVersion, "2")
+        XCTAssertEqual(pending.permission.resource.kind, .userFile)
+        XCTAssertEqual(pending.permission.resource.identifier, resourceID.rawValue)
+        XCTAssertEqual(pending.permission.resourceDisplayName, "fixture.txt")
 
         let requestsBeforeApproval = await transport.capturedBodies()
         XCTAssertEqual(requestsBeforeApproval.count, 1)
         let firstRequestText = String(data: requestsBeforeApproval[0], encoding: .utf8) ?? ""
         XCTAssertFalse(firstRequestText.contains(secret))
+        XCTAssertFalse(firstRequestText.contains("/user-selected/fixture.txt"))
 
         let approved = try await runtime.approvePermission(
             pendingID: pending.id,
@@ -93,6 +98,7 @@ final class NativeAgentToolIntegrationTests: XCTestCase {
         XCTAssertEqual(toolMessage["tool_call_id"] as? String, "call_integration_1")
         let toolContent = toolMessage["content"] as? String ?? ""
         XCTAssertTrue(toolContent.contains(secret))
+        XCTAssertTrue(toolContent.contains(resourceID.rawValue))
 
         let restored = try await store.loadConversation(id: conversationID)
         let durableConversation = try XCTUnwrap(restored)

@@ -9,15 +9,18 @@ final class ToolHistoryPersistenceTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let fileURL = directory.appendingPathComponent("fixture.txt")
-        try Data("durable tool result".utf8).write(to: fileURL)
         let databaseURL = directory.appendingPathComponent("lumi.sqlite3")
         let conversationID = UUID()
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(
+            content: "durable tool result",
+            displayName: "fixture.txt"
+        )
 
         let call = try ToolCall.encoding(
             name: "file.readText",
-            version: "1",
-            input: ReadTextFileInput(path: fileURL.path),
+            version: "2",
+            input: ReadTextFileInput(resourceID: resourceID),
             providerCallID: "call_persist_77"
         )
         let model = HistoryScriptedModel(turns: [
@@ -26,7 +29,7 @@ final class ToolHistoryPersistenceTests: XCTestCase {
         ])
         let store = try SQLiteConversationStore(url: databaseURL)
         let permissions = PermissionEngine()
-        let registry = try ToolRegistry(tools: [AnyTool(ReadTextFileTool())])
+        let registry = try ToolRegistry(tools: [AnyTool(ReadTextFileTool(broker: broker))])
         let runtime = AgentRuntime(
             store: store,
             model: model,
@@ -56,11 +59,11 @@ final class ToolHistoryPersistenceTests: XCTestCase {
         XCTAssertEqual(event.status, .success)
         XCTAssertEqual(event.providerCallID, "call_persist_77")
         XCTAssertEqual(event.tool, "file.readText")
-        XCTAssertEqual(event.version, "1")
+        XCTAssertEqual(event.version, "2")
         XCTAssertEqual(
             event.arguments,
             .object([
-                "path": .string(fileURL.path),
+                "resourceID": .string(resourceID.rawValue),
                 "maxBytes": .number(Double(ReadTextFileInput.defaultMaxBytes))
             ])
         )
@@ -68,7 +71,9 @@ final class ToolHistoryPersistenceTests: XCTestCase {
             return XCTFail("Tool result must remain structured")
         }
         XCTAssertEqual(result["content"], .string("durable tool result"))
+        XCTAssertEqual(result["resourceID"], .string(resourceID.rawValue))
         XCTAssertEqual(event.metadata["encoding"], .string("utf-8"))
+        XCTAssertEqual(event.metadata["resourceID"], .string(resourceID.rawValue))
     }
 }
 

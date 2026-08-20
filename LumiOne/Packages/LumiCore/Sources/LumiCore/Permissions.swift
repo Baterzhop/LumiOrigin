@@ -27,6 +27,7 @@ public struct ResourceScope: Hashable, Codable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case appData
         case file
+        case userFile
         case directory
         case externalService
         case system
@@ -41,8 +42,13 @@ public struct ResourceScope: Hashable, Codable, Sendable {
         self.identifier = identifier
     }
 
-    public static func file(_ path: String) -> ResourceScope {
-        ResourceScope(kind: .file, identifier: path)
+    /// Legacy/general file scope. New user-selected file tools should use `.userFile`.
+    public static func file(_ identifier: String) -> ResourceScope {
+        ResourceScope(kind: .file, identifier: identifier)
+    }
+
+    public static func userFile(_ id: UserFileResourceID) -> ResourceScope {
+        ResourceScope(kind: .userFile, identifier: id.rawValue)
     }
 }
 
@@ -56,17 +62,23 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
     public let capability: ToolCapability
     public let resource: ResourceScope
     public let reason: String
+    public let resourceDisplayName: String?
+    public let resourceLocationHint: String?
 
     public init(
         id: UUID = UUID(),
         capability: ToolCapability,
         resource: ResourceScope,
-        reason: String
+        reason: String,
+        resourceDisplayName: String? = nil,
+        resourceLocationHint: String? = nil
     ) {
         self.id = id
         self.capability = capability
         self.resource = resource
         self.reason = reason
+        self.resourceDisplayName = resourceDisplayName
+        self.resourceLocationHint = resourceLocationHint
     }
 }
 

@@ -48,18 +48,21 @@ jobs:
           gh issue comment 2 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/core-failure.md"
 
   mac-app-build:
-    name: LumiMac build (macOS)
+    name: LumiMac build + tests (macOS)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Show Swift version
         run: swift --version
-      - name: Build LumiMac
+      - name: Test and build LumiMac
         working-directory: LumiOne/Apps/LumiMac
         shell: bash
         run: |
           set -o pipefail
-          swift build 2>&1 | tee "$RUNNER_TEMP/mac-build.log"
+          {
+            swift test
+            swift build
+          } 2>&1 | tee "$RUNNER_TEMP/mac-build.log"
       - name: Report macOS build failure to issue #2
         if: failure()
         env:
@@ -67,15 +70,15 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### CI failure — LumiMac build (macOS)"
+            echo "### CI failure — LumiMac build + tests (macOS)"
             echo
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo
             echo '```text'
             if [ -f "$RUNNER_TEMP/mac-build.log" ]; then
-              tail -n 120 "$RUNNER_TEMP/mac-build.log"
+              tail -n 160 "$RUNNER_TEMP/mac-build.log"
             else
-              echo "macOS build command did not produce a log; inspect the workflow run above."
+              echo "macOS test/build command did not produce a log; inspect the workflow run above."
             fi
             echo '```'
           } > "$RUNNER_TEMP/mac-failure.md"

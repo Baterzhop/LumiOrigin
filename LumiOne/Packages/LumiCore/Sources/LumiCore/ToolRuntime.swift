@@ -131,12 +131,21 @@ public protocol Tool: Sendable {
     static var descriptor: ToolDescriptor { get }
 
     func resource(for input: Input) throws -> ResourceScope
+    func permissionRequest(for input: Input) throws -> PermissionRequest
     func execute(_ input: Input) async throws -> Output
     func warnings(for input: Input, output: Output) -> [ToolWarning]
     func metadata(for input: Input, output: Output) -> [String: JSONValue]
 }
 
 public extension Tool {
+    func permissionRequest(for input: Input) throws -> PermissionRequest {
+        PermissionRequest(
+            capability: Self.descriptor.capability,
+            resource: try resource(for: input),
+            reason: Self.descriptor.summary
+        )
+    }
+
     func warnings(for input: Input, output: Output) -> [ToolWarning] { [] }
     func metadata(for input: Input, output: Output) -> [String: JSONValue] { [:] }
 }
@@ -236,16 +245,18 @@ fileprivate struct ErasedToolResult: Sendable {
 public struct AnyTool: Sendable {
     public let descriptor: ToolDescriptor
 
-    private let resourceResolver: @Sendable (Data) throws -> ResourceScope
+    private let permissionResolver: @Sendable (Data) throws -> PermissionRequest
     private let executor: @Sendable (Data) async throws -> ErasedToolResult
 
     public init<T: Tool>(_ tool: T) {
         descriptor = T.descriptor
 
-        resourceResolver = { data in
+        permissionResolver = { data in
             do {
                 let input = try JSONDecoder().decode(T.Input.self, from: data)
-                return try tool.resource(for: input)
+                return try tool.permissionRequest(for: input)
+            } catch let error as ToolRuntimeError {
+                throw error
             } catch {
                 throw ToolRuntimeError.invalidArguments(
                     tool: T.descriptor.registryKey,
@@ -284,11 +295,7 @@ public struct AnyTool: Sendable {
     }
 
     func permissionRequest(arguments: Data) throws -> PermissionRequest {
-        PermissionRequest(
-            capability: descriptor.capability,
-            resource: try resourceResolver(arguments),
-            reason: descriptor.summary
-        )
+        try permissionResolver(arguments)
     }
 
     fileprivate func execute(arguments: Data) async throws -> ErasedToolResult {
