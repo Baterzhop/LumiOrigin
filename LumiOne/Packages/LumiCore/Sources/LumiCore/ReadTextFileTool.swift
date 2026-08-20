@@ -1,12 +1,26 @@
 import Foundation
 
 public struct ReadTextFileInput: Codable, Equatable, Sendable {
+    public static let defaultMaxBytes = 1_048_576
+
     public let path: String
     public let maxBytes: Int
 
-    public init(path: String, maxBytes: Int = 1_048_576) {
+    public init(path: String, maxBytes: Int = defaultMaxBytes) {
         self.path = path
         self.maxBytes = maxBytes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case maxBytes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        path = try container.decode(String.self, forKey: .path)
+        maxBytes = try container.decodeIfPresent(Int.self, forKey: .maxBytes)
+            ?? Self.defaultMaxBytes
     }
 }
 

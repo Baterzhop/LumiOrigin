@@ -5,22 +5,24 @@ import FoundationNetworking
 
 public struct ModelRequest: Sendable {
     public let messages: [ChatMessage]
+    public let availableTools: [ToolDescriptor]
 
-    public init(messages: [ChatMessage]) {
+    public init(
+        messages: [ChatMessage],
+        availableTools: [ToolDescriptor] = []
+    ) {
         self.messages = messages
+        self.availableTools = availableTools
     }
 }
 
-public struct ModelResponse: Sendable {
-    public let content: String
-
-    public init(content: String) {
-        self.content = content
-    }
+public enum ModelTurn: Sendable {
+    case final(String)
+    case toolCall(ToolCall)
 }
 
 public protocol ModelProvider: Sendable {
-    func respond(to request: ModelRequest) async throws -> ModelResponse
+    func respond(to request: ModelRequest) async throws -> ModelTurn
 }
 
 public enum ModelProviderError: Error, CustomStringConvertible, Sendable {
@@ -40,6 +42,11 @@ public enum ModelProviderError: Error, CustomStringConvertible, Sendable {
     }
 }
 
+/// Text-only provider for the current local OpenAI-compatible endpoint.
+///
+/// Native `tool_calls` transport is intentionally a later slice. Returning a
+/// `.toolCall` is already supported by `ModelProvider`, so AgentRuntime and the
+/// permission boundary can be tested independently from one server dialect.
 public struct OpenAICompatibleProvider: ModelProvider, Sendable {
     public let endpoint: URL
     public let model: String
@@ -55,9 +62,9 @@ public struct OpenAICompatibleProvider: ModelProvider, Sendable {
         self.systemPrompt = systemPrompt
     }
 
-    public func respond(to request: ModelRequest) async throws -> ModelResponse {
+    public func respond(to request: ModelRequest) async throws -> ModelTurn {
         var apiMessages = [APIMessage(role: "system", content: systemPrompt)]
-        apiMessages.append(contentsOf: request.messages.compactMap { message in
+        apiMessages.append(contentsOf: request.messages.map { message in
             let role: String
             switch message.role {
             case .system: role = "system"
@@ -92,7 +99,7 @@ public struct OpenAICompatibleProvider: ModelProvider, Sendable {
             throw ModelProviderError.emptyResponse
         }
 
-        return ModelResponse(content: content)
+        return .final(content)
     }
 }
 
