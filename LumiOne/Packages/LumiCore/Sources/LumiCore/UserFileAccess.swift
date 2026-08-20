@@ -11,6 +11,16 @@ public struct UserFileResourceID: RawRepresentable, Hashable, Codable, Sendable,
         self.rawValue = UUID().uuidString.lowercased()
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        rawValue = try container.decode(String.self)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     public var description: String { rawValue }
 }
 
