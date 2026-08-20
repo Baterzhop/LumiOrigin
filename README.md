@@ -26,7 +26,7 @@ Lumi Core (Python)
   │   ├─ separate Git checkout inspection
   │   ├─ strict typed proposal
   │   ├─ exact diff review
-  │   ├─ approval-gated branch/apply/checks
+  │   ├─ approval-gated branch/apply/validation
   │   └─ second approval → commit/push/draft PR
   ├─ Model gateway
   ├─ RAG
@@ -70,8 +70,10 @@ Lumi Core (Python)
 - Absolute paths and workspace escapes are rejected; shell/delete tools are not exposed.
 - Task execution is bounded by step, tool-call, and wall-clock budgets.
 - Developer Agent inspects a separate clean Git checkout and produces a strict bounded file proposal before any mutation.
-- Developer file changes are limited to UTF-8 `create`/`replace`; `.git`, delete, arbitrary shell, arbitrary HTTP, absolute paths, and traversal are not exposed.
-- The exact proposed diff is shown before approval; fixed allow-listed validation profiles run only after approval.
+- Developer file changes are limited to UTF-8 `create`/`replace`; `.git`, delete, arbitrary shell, arbitrary HTTP, absolute paths, traversal, and symlink escape are rejected.
+- The exact proposed diff is shown before approval.
+- Local developer validation uses fixed allow-listed profiles only and is disabled by default because tests execute repository code.
+- If required checks are disabled, skipped, or fail, the developer session cannot be published.
 - Commit/push/draft-PR publication requires a second explicit approval, and Lumi never auto-merges.
 - Developer workflow state, diff, validation, branch, commit, PR URL, and events are persisted for audit; GitHub credentials are not.
 - Tool outputs, repository content, retrieved documents, summaries, and recalled memory have explicit trust boundaries.
@@ -117,6 +119,14 @@ Developer Agent is disabled until a **separate Git checkout/worktree** is config
 export LUMI_DEV_REPO_ROOT="$HOME/Projects/Lumi-dev-worktree"
 export LUMI_DEV_BASE_BRANCH=main
 ```
+
+Local developer validation is intentionally disabled by default. Enable it only when you are willing to execute the repository's fixed validation profiles after reviewing the proposed code change:
+
+```bash
+export LUMI_DEV_ALLOW_LOCAL_CHECKS=true
+```
+
+When required checks cannot run, Lumi uses `validation_incomplete` and blocks publish rather than treating skipped validation as success.
 
 Optional GitHub draft-PR publishing:
 
