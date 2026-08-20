@@ -128,6 +128,7 @@ public struct KnowledgeIngestionResult: Equatable, Sendable {
 public enum KnowledgeIngestionError: Error, CustomStringConvertible, Sendable, Equatable {
     case emptyDocument
     case invalidPageOrder
+    case sourceIdentityMismatch
     case noChunks
 
     public var description: String {
@@ -136,6 +137,8 @@ public enum KnowledgeIngestionError: Error, CustomStringConvertible, Sendable, E
             return "Document extraction returned no pages."
         case .invalidPageOrder:
             return "Document pages must have unique, strictly increasing one-based page numbers."
+        case .sourceIdentityMismatch:
+            return "Document extractor returned content for a different user-file resource."
         case .noChunks:
             return "Document extraction produced no indexable text chunks."
         }
