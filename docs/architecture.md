@@ -7,12 +7,13 @@ Lumi is a local-first personal AI assistant. The goal is not to simulate conscio
 ## Non-negotiable design rules
 
 1. **The model is not the system.** LLM output is untrusted input to orchestration and policy layers.
-2. **One canonical state store.** SQLite is the initial source of truth for conversations, tasks, tool calls, documents, chunks, memories, and compact summaries.
-3. **No direct LLM-to-shell/file mutation.** Every side effect goes through a typed tool + policy decision.
+2. **One canonical state store.** SQLite is the initial source of truth for conversations, tasks, tool calls, documents, chunks, memories, summaries, and developer-workflow audit state.
+3. **No direct LLM-to-shell/file mutation.** Every side effect goes through a typed, validated boundary and explicit policy/approval when required.
 4. **Local-first, provider-neutral.** Ollama is the first provider, not a hard dependency of the architecture.
 5. **Bounded execution.** Agent tasks have step/time/tool budgets and chat context has a token budget.
 6. **Grounding is measurable.** RAG and durable-memory retrieval have deterministic regression gates in addition to unit tests.
 7. **No microservices until scale requires them.** V4 remains one Python service with explicit internal boundaries.
+8. **Development is version-controlled.** Developer Agent changes happen only in a separate Git checkout/branch, never by rewriting the running Lumi source tree in place.
 
 ## Current flow
 
@@ -29,20 +30,26 @@ API/session layer
  │        ├─ durable Memory recall                      │
  │        └─ grounded RAG                               │
  │                                                       │
- └─ TaskRuntime                                         │
-      ├─ LLMTaskPlanner                                 │
-      ├─ ToolRegistry                                   │
-      ├─ PolicyEngine                                   │
-      ├─ budgets                                        │
-      └─ approval boundary                              │
-              │                                         │
-              ├─ read-only tools                        │
-              └─ approved side effects                  │
+ ├─ TaskRuntime                                         │
+ │    ├─ LLMTaskPlanner                                 │
+ │    ├─ ToolRegistry                                   │
+ │    ├─ PolicyEngine                                   │
+ │    ├─ budgets                                        │
+ │    └─ approval boundary                              │
+ │                                                       │
+ └─ DeveloperRuntime                                    │
+      ├─ read-only Git repository inspection            │
+      ├─ strict DeveloperProposal                       │
+      ├─ approval #1: exact plan + diff                 │
+      ├─ isolated lumi/dev-* branch                     │
+      ├─ fixed allow-listed validation profiles         │
+      ├─ approval #2: publish                           │
+      └─ commit + push + DRAFT PR, never merge          │
                                                         │
               ModelGateway ← Ollama ────────────────────┘
                       │
                       ▼
-          SQLite + FTS/vector state
+          SQLite + FTS/vector/audit state
 ```
 
 ## Domain boundaries
@@ -56,8 +63,11 @@ Selects recent dialogue by estimated token budget and compacts older turns into 
 ### TaskRuntime
 Owns task lifecycle: receive → plan → act → observe → finish. It enforces step/time/tool budgets and persists every proposed tool call. It never bypasses PolicyEngine.
 
+### DeveloperRuntime
+Owns software-change lifecycle: inspect → propose → user approval → isolated branch → apply exact proposal → run fixed validation profiles → user publish approval → commit/push → draft pull request. It never auto-merges and it refuses to target the running source checkout.
+
 ### ModelGateway
-Normalizes model providers, timeouts, metadata, fallbacks, and streaming formats. Agent planning fails closed if the planner output is malformed.
+Normalizes model providers, timeouts, metadata, fallbacks, and streaming formats. Agent and developer planning fail closed if model output is unavailable or malformed.
 
 ### Storage
 Owns migrations and durable records. SQLite is the canonical store.
@@ -73,11 +83,13 @@ Durable memory is separate from raw conversation history and summaries. A durabl
 
 ## Security model
 
-External documents, websites, emails, tool output, model-generated tool arguments, conversation summaries, and retrieved memory are context with explicit trust boundaries; none can override system policy.
+External documents, websites, emails, tool output, model-generated tool arguments, repository content, conversation summaries, and retrieved memory are context with explicit trust boundaries; none can override system policy.
 
-Workspace tools resolve every path against a dedicated configured root after symlink resolution. Absolute paths and parent traversal outside that root are rejected. `workspace.write_text` requires explicit approval of displayed arguments. Delete and shell tools are not registered. Critical tools are disabled by policy.
+Workspace tools resolve every path against a dedicated configured root after symlink resolution. Absolute paths and parent traversal outside that root are rejected. `workspace.write_text` requires explicit approval of displayed arguments. Delete and general shell tools are not registered. Critical tools are disabled by policy.
 
 Durable memory is never inferred and persisted silently in M4. The agent tool registry exposes no autonomous memory-write tool. Chat can only recall records that were deliberately saved by the user.
+
+Developer Agent uses a separate configured Git checkout. Planning is read-only. The first approval authorizes only the exact displayed create/replace operations plus fixed test profiles. The second approval authorizes commit/push/draft-PR publication. Model-supplied shell commands, arbitrary network requests, `.git` writes, deletes, absolute paths, traversal, unexpected worktree changes, and automatic merge are rejected. GitHub credentials remain process-environment secrets and are not persisted or returned by the API.
 
 ## Milestones
 
@@ -141,13 +153,17 @@ Exit gate: success, denial, timeout, malformed-argument, sandbox-escape, approva
 
 Exit gate: token-budget behavior, persistence, retrieval regression thresholds, explicit-approval semantics, Swift transport/build, and deletion guarantees pass in CI. Representative multilingual/long-horizon memory quality remains required before beta.
 
-### M5 — Developer Agent — next
-- inspect repo
-- propose plan
-- create branch
-- modify files
-- run tests
-- present diff
-- PR only after explicit approval
+### M5 — Developer Agent — functional alpha implemented
+- separate-checkout repository inspection
+- strict typed full-file proposal with bounded scope
+- exact pre-approval diff
+- isolated `lumi/dev-*` branch creation only after approval
+- UTF-8 create/replace operations only; no deletes or arbitrary shell
+- fixed allow-listed validation profiles selected by changed paths
+- durable developer session + event audit trail
+- second explicit approval before commit/push/PR
+- GitHub-only draft PR publisher with environment-only token
+- native macOS review/approval window
+- no automatic merge and no direct in-place self-modification
 
-Exit gate: no direct self-modification of the running application; all changes are version-controlled and auditable.
+Exit gate: workflow success, denial, dirty-repository guard, path-escape guard, local Git branch/commit/push behavior, Swift transport/build, and existing RAG/memory/security suites must remain green in CI. Real Ollama planning plus a real GitHub draft-PR publish remain machine-specific acceptance tests.
