@@ -1,13 +1,20 @@
 import Foundation
 
 public actor LumiEngine {
+    public static let defaultConversationID = UUID(uuidString: "8E7FA7AF-9B0D-4E9C-B9FA-4112C8336C01")!
+
     public let memory: MemoryStore
     public let reflections: ReflectionJournal
     public let knowledge: KnowledgeIndex
+    public let conversationID: UUID
 
     private let router: IntentRouter
     private let prompts: PromptRegistry
     private let llm: any LLMClient
+    private let conversationStore: any ConversationStore
+
+    private var hasRestoredConversation = false
+    private var storageIssue: String?
 
     public init(
         llm: any LLMClient = ResilientLLMClient(primary: OllamaClient()),
@@ -15,7 +22,9 @@ public actor LumiEngine {
         router: IntentRouter = IntentRouter(),
         memory: MemoryStore = MemoryStore(),
         reflections: ReflectionJournal = ReflectionJournal(),
-        knowledge: KnowledgeIndex = KnowledgeIndex(documents: LumiEngine.bootstrapKnowledge)
+        knowledge: KnowledgeIndex = KnowledgeIndex(documents: LumiEngine.bootstrapKnowledge),
+        conversationStore: any ConversationStore = InMemoryConversationStore(),
+        conversationID: UUID = LumiEngine.defaultConversationID
     ) {
         self.llm = llm
         self.prompts = prompts
@@ -23,6 +32,8 @@ public actor LumiEngine {
         self.memory = memory
         self.reflections = reflections
         self.knowledge = knowledge
+        self.conversationStore = conversationStore
+        self.conversationID = conversationID
     }
 
     public func respond(to input: String, profile requestedProfile: String? = nil) async -> LumiReply {
@@ -119,17 +130,44 @@ public actor LumiEngine {
         }
     }
 
+    @discardableResult
+    public func restoreConversation() async throws -> [ChatMessage] {
+        do {
+            let restored = try await conversationStore.loadMessages(conversationID: conversationID)
+            await memory.replace(with: restored)
+            hasRestoredConversation = true
+            storageIssue = nil
+            return restored
+        } catch {
+            storageIssue = error.localizedDescription
+            throw error
+        }
+    }
+
     public func messages() async -> [ChatMessage] {
-        await memory.all()
+        await ensureConversationRestored()
+        return await memory.all()
     }
 
     public func recentReflections(limit: Int = 20) async -> [ReflectionEvent] {
         await reflections.recent(limit: limit)
     }
 
+    public func persistenceIssue() -> String? {
+        storageIssue
+    }
+
     public func clearConversation() async {
         await memory.clear()
         await reflections.clear()
+        hasRestoredConversation = true
+
+        do {
+            try await conversationStore.clear(conversationID: conversationID)
+            storageIssue = nil
+        } catch {
+            storageIssue = error.localizedDescription
+        }
     }
 
     public func availableProfiles() -> [String] {
@@ -145,12 +183,14 @@ public actor LumiEngine {
     }
 
     private func prepare(_ request: LumiRequest) async -> PreparedRequest {
+        await ensureConversationRestored()
+
         let cleanInput = request.input.trimmingCharacters(in: .whitespacesAndNewlines)
         let intent = router.detect(cleanInput)
         let selectedProfileName = request.profileOverride ?? profileName(for: intent)
         let profile = prompts.profile(named: selectedProfileName)
 
-        _ = await memory.append(role: .user, content: cleanInput)
+        _ = await appendMessage(role: .user, content: cleanInput)
         let context = await knowledge.search(cleanInput, limit: 4)
         let history = await memory.recent(limit: 18)
         let systemPrompt = composeSystemPrompt(profile: profile, context: context)
@@ -175,7 +215,7 @@ public actor LumiEngine {
         context: [KnowledgeHit],
         profile: PromptProfile
     ) async -> LumiReply {
-        let assistant = await memory.append(role: .assistant, content: completion.content)
+        let assistant = await appendMessage(role: .assistant, content: completion.content)
         await reflections.record(input: input, intent: intent, response: completion.content)
 
         return LumiReply(
@@ -185,6 +225,28 @@ public actor LumiEngine {
             profile: profile.name,
             runtime: completion.runtime
         )
+    }
+
+    private func ensureConversationRestored() async {
+        guard !hasRestoredConversation else { return }
+        do {
+            _ = try await restoreConversation()
+        } catch {
+            hasRestoredConversation = true
+        }
+    }
+
+    private func appendMessage(role: ChatRole, content: String) async -> ChatMessage {
+        let message = await memory.append(role: role, content: content)
+
+        do {
+            try await conversationStore.append(message, conversationID: conversationID)
+            storageIssue = nil
+        } catch {
+            storageIssue = error.localizedDescription
+        }
+
+        return message
     }
 
     private func profileName(for intent: LumiIntent) -> String {
@@ -226,7 +288,7 @@ public actor LumiEngine {
         KnowledgeDocument(
             id: "lumi-memory",
             title: "Conversation memory",
-            text: "Conversation memory is bounded in-memory state. It stores recent user and assistant messages and can be cleared from the interface. Durable memory should be added as a separate persistence layer.",
+            text: "Conversation memory uses a bounded working buffer and can be backed by durable conversation storage. Long-term semantic memory remains a separate future layer.",
             tags: ["memory", "privacy"]
         )
     ]
