@@ -26,9 +26,18 @@ public actor LumiEngine {
     }
 
     public func respond(to input: String, profile requestedProfile: String? = nil) async -> LumiReply {
-        let cleanInput = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        await respond(
+            LumiRequest(
+                input: input,
+                profileOverride: requestedProfile
+            )
+        )
+    }
+
+    public func respond(_ request: LumiRequest) async -> LumiReply {
+        let cleanInput = request.input.trimmingCharacters(in: .whitespacesAndNewlines)
         let intent = router.detect(cleanInput)
-        let selectedProfileName = requestedProfile ?? profileName(for: intent)
+        let selectedProfileName = request.profileOverride ?? profileName(for: intent)
         let profile = prompts.profile(named: selectedProfileName)
 
         _ = await memory.append(role: .user, content: cleanInput)
@@ -36,25 +45,34 @@ public actor LumiEngine {
         let history = await memory.recent(limit: 18)
         let systemPrompt = composeSystemPrompt(profile: profile, context: context)
 
-        let responseText: String
+        let completion: ModelResponse
         do {
-            responseText = try await llm.complete(
+            completion = try await llm.complete(
                 messages: history,
                 systemPrompt: systemPrompt,
                 profile: profile
             )
         } catch {
-            responseText = "I couldn't reach the configured language model: \(error.localizedDescription)"
+            completion = ModelResponse(
+                content: "I couldn't reach the configured language model: \(error.localizedDescription)",
+                runtime: RuntimeMetadata(
+                    provider: .unknown,
+                    model: "unavailable",
+                    fallbackUsed: false,
+                    finishReason: .error
+                )
+            )
         }
 
-        let assistant = await memory.append(role: .assistant, content: responseText)
-        await reflections.record(input: cleanInput, intent: intent, response: responseText)
+        let assistant = await memory.append(role: .assistant, content: completion.content)
+        await reflections.record(input: cleanInput, intent: intent, response: completion.content)
 
         return LumiReply(
             message: assistant,
             intent: intent,
             context: context,
-            profile: profile.name
+            profile: profile.name,
+            runtime: completion.runtime
         )
     }
 
