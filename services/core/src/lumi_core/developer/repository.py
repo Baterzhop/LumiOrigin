@@ -89,6 +89,21 @@ class GitRepository:
             raise RepositoryError("developer_replace_target_missing")
         return candidate
 
+    def assert_applied_changes(self, changes: list[DeveloperFileChange]) -> None:
+        for change in changes:
+            path = self._resolve_existing_file(change.path)
+            if path.stat().st_size > self.max_read_bytes:
+                raise RepositoryError("developer_file_too_large")
+            data = path.read_bytes()
+            if b"\x00" in data[:4096]:
+                raise RepositoryError("developer_binary_file_forbidden")
+            try:
+                content = data.decode("utf-8", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise RepositoryError("developer_non_utf8_file") from exc
+            if content != change.content:
+                raise RepositoryError("developer_planned_content_changed:" + change.path)
+
     def read_text(self, relative_path: str, *, max_chars: int = 24_000) -> str | None:
         path = self._resolve_existing_file(relative_path)
         size = path.stat().st_size
