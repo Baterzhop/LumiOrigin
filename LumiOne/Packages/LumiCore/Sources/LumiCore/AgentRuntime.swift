@@ -55,7 +55,6 @@ public actor AgentRuntime {
             conversation.messages.append(userMessage)
             conversation.updatedAt = Date()
 
-            // User input is durable before model, retrieval or tool execution.
             phase = .persistingUserMessage
             try await store.saveConversation(conversation)
 
@@ -100,8 +99,6 @@ public actor AgentRuntime {
 
             switch outcome {
             case .permissionRequired(let changedRequest):
-                // Permission is always recomputed from the immutable pending call.
-                // If resource identity or state changes, never reuse approval silently.
                 return suspendForPermission(
                     conversation: pending.conversation,
                     conversationID: pending.conversationID,
@@ -195,8 +192,6 @@ public actor AgentRuntime {
                 throw AgentRuntimeError.emptyFinalResponse
             }
 
-            // Knowledge citations are validated only against the exact Knowledge
-            // sub-snapshot for this turn. Memory never becomes document provenance.
             let citations = try GroundedCitationResolver().resolve(
                 in: normalized,
                 context: contextSnapshot?.groundedKnowledge
@@ -296,7 +291,7 @@ public actor AgentRuntime {
             providerCallID: call.providerCallID,
             tool: success.descriptor.name,
             version: success.descriptor.version,
-            arguments: try decodeToolArguments(call.arguments),
+            arguments: try await durableHistoryArguments(for: call),
             data: success.data,
             warnings: success.warnings,
             metadata: success.metadata,
@@ -316,13 +311,24 @@ public actor AgentRuntime {
             providerCallID: call.providerCallID,
             tool: call.name,
             version: call.version,
-            arguments: try decodeToolArguments(call.arguments),
+            arguments: try await durableHistoryArguments(for: call),
             data: nil,
             warnings: [],
             metadata: [:],
             detail: "User denied \(request.capability.rawValue) for \(request.resource.identifier)."
         )
         return try await appendToolEvent(event, to: conversation)
+    }
+
+    private func durableHistoryArguments(for call: ToolCall) async throws -> JSONValue {
+        if let toolRuntime {
+            do {
+                return try await toolRuntime.historyArguments(for: call)
+            } catch {
+                throw AgentRuntimeError.toolArgumentsEncodingFailed
+            }
+        }
+        return try decodeToolArguments(call.arguments)
     }
 
     private func appendToolEvent(
