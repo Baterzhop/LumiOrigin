@@ -4,6 +4,7 @@ public actor LumiEngine {
     public static let defaultConversationID = UUID(uuidString: "8E7FA7AF-9B0D-4E9C-B9FA-4112C8336C01")!
 
     public let memory: MemoryStore
+    public let longTermMemory: MemoryRuntime?
     public let reflections: ReflectionJournal
     public let knowledge: any KnowledgeRetrieving
     public let conversationID: UUID
@@ -23,6 +24,7 @@ public actor LumiEngine {
         prompts: PromptRegistry = .bundled(),
         router: IntentRouter = IntentRouter(),
         memory: MemoryStore = MemoryStore(),
+        longTermMemory: MemoryRuntime? = nil,
         reflections: ReflectionJournal = ReflectionJournal(),
         knowledge: any KnowledgeRetrieving = KnowledgeIndex(documents: LumiEngine.bootstrapKnowledge),
         conversationStore: any ConversationStore = InMemoryConversationStore(),
@@ -34,6 +36,7 @@ public actor LumiEngine {
         self.prompts = prompts
         self.router = router
         self.memory = memory
+        self.longTermMemory = longTermMemory
         self.reflections = reflections
         self.knowledge = knowledge
         self.conversationStore = conversationStore
@@ -43,12 +46,7 @@ public actor LumiEngine {
     }
 
     public func respond(to input: String, profile requestedProfile: String? = nil) async -> LumiReply {
-        await respond(
-            LumiRequest(
-                input: input,
-                profileOverride: requestedProfile
-            )
-        )
+        await respond(LumiRequest(input: input, profileOverride: requestedProfile))
     }
 
     public func respond(_ request: LumiRequest) async -> LumiReply {
@@ -78,6 +76,7 @@ public actor LumiEngine {
             input: prepared.cleanInput,
             intent: prepared.intent,
             context: prepared.context,
+            memories: prepared.memories,
             profile: prepared.profile,
             contextBudget: prepared.contextBudget
         )
@@ -87,12 +86,7 @@ public actor LumiEngine {
         to input: String,
         profile requestedProfile: String? = nil
     ) async -> AsyncThrowingStream<LumiStreamEvent, Error> {
-        await streamRespond(
-            LumiRequest(
-                input: input,
-                profileOverride: requestedProfile
-            )
-        )
+        await streamRespond(LumiRequest(input: input, profileOverride: requestedProfile))
     }
 
     public func streamRespond(_ request: LumiRequest) async -> AsyncThrowingStream<LumiStreamEvent, Error> {
@@ -104,6 +98,7 @@ public actor LumiEngine {
                 input: prepared.cleanInput,
                 intent: prepared.intent,
                 context: prepared.context,
+                memories: prepared.memories,
                 profile: prepared.profile,
                 contextBudget: prepared.contextBudget
             )
@@ -114,7 +109,6 @@ public actor LumiEngine {
         }
 
         let modelStream = llm.stream(prepared.modelRequest)
-
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -131,6 +125,7 @@ public actor LumiEngine {
                                 input: prepared.cleanInput,
                                 intent: prepared.intent,
                                 context: prepared.context,
+                                memories: prepared.memories,
                                 profile: prepared.profile,
                                 contextBudget: prepared.contextBudget
                             )
@@ -144,17 +139,11 @@ public actor LumiEngine {
                 } catch is CancellationError {
                     continuation.finish(throwing: LumiRuntimeError.cancelled)
                 } catch {
-                    if Task.isCancelled {
-                        continuation.finish(throwing: LumiRuntimeError.cancelled)
-                    } else {
-                        continuation.finish(throwing: error)
-                    }
+                    continuation.finish(throwing: Task.isCancelled ? LumiRuntimeError.cancelled : error)
                 }
             }
 
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
-            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
         }
     }
 
@@ -185,6 +174,8 @@ public actor LumiEngine {
         storageIssue
     }
 
+    /// Clears only the durable conversation transcript and bounded working buffer.
+    /// Long-term memory has an independent lifecycle and must be deleted explicitly.
     public func clearConversation() async {
         await memory.clear()
         await reflections.clear()
@@ -202,10 +193,67 @@ public actor LumiEngine {
         prompts.names
     }
 
+    @discardableResult
+    public func remember(
+        _ content: String,
+        kind: MemoryKind = .semantic,
+        importance: Double = 0.6,
+        expiresAt: Date? = nil,
+        isPinned: Bool = false,
+        tags: [String] = []
+    ) async throws -> MemoryRecord {
+        guard let longTermMemory else { throw MemoryError.unavailable }
+        return try await longTermMemory.remember(
+            content,
+            kind: kind,
+            source: .explicitUser,
+            confidence: 1,
+            importance: importance,
+            expiresAt: expiresAt,
+            isPinned: isPinned,
+            tags: tags
+        )
+    }
+
+    public func storedMemories(limit: Int = 100) async throws -> [MemoryRecord] {
+        guard let longTermMemory else { throw MemoryError.unavailable }
+        return try await longTermMemory.all(limit: limit)
+    }
+
+    @discardableResult
+    public func updateMemory(
+        id: UUID,
+        kind: MemoryKind? = nil,
+        content: String? = nil,
+        confidence: Double? = nil,
+        importance: Double? = nil,
+        expiresAt: Date?? = nil,
+        isPinned: Bool? = nil,
+        tags: [String]? = nil
+    ) async throws -> MemoryRecord {
+        guard let longTermMemory else { throw MemoryError.unavailable }
+        return try await longTermMemory.update(
+            id: id,
+            kind: kind,
+            content: content,
+            confidence: confidence,
+            importance: importance,
+            expiresAt: expiresAt,
+            isPinned: isPinned,
+            tags: tags
+        )
+    }
+
+    public func forgetMemory(id: UUID) async throws {
+        guard let longTermMemory else { throw MemoryError.unavailable }
+        try await longTermMemory.forget(id: id)
+    }
+
     private struct PreparedRequest: Sendable {
         let cleanInput: String
         let intent: LumiIntent
         let context: [KnowledgeHit]
+        let memories: [MemoryHit]
         let profile: PromptProfile
         let modelRequest: ModelRequest
         let contextBudget: ContextBudgetReport
@@ -221,9 +269,6 @@ public actor LumiEngine {
 
         _ = await appendMessage(role: .user, content: cleanInput)
 
-        // Direct chat should not pay the retrieval/embedding cost on every turn. Until the
-        // capability router arrives, knowledge intent or an explicit knowledge profile is the
-        // boundary that enables retrieval.
         let contextCandidates: [KnowledgeHit]
         if intent == .knowledge || profile.name == "knowledge" {
             contextCandidates = await knowledge.search(cleanInput, limit: 8)
@@ -231,17 +276,28 @@ public actor LumiEngine {
             contextCandidates = []
         }
 
+        let memoryCandidates: [MemoryHit]
+        if cleanInput.isEmpty {
+            memoryCandidates = []
+        } else if let longTermMemory {
+            memoryCandidates = await longTermMemory.relevant(to: cleanInput, limit: 8)
+        } else {
+            memoryCandidates = []
+        }
+
         let fullHistory = await memory.all()
         let packed = contextManager.pack(
             profile: profile,
             history: fullHistory,
-            knowledge: contextCandidates
+            knowledge: contextCandidates,
+            memories: memoryCandidates
         )
 
         return PreparedRequest(
             cleanInput: cleanInput,
             intent: intent,
             context: packed.knowledge,
+            memories: packed.memories,
             profile: profile,
             modelRequest: ModelRequest(
                 messages: packed.messages,
@@ -257,20 +313,19 @@ public actor LumiEngine {
         input: String,
         intent: LumiIntent,
         context: [KnowledgeHit],
+        memories: [MemoryHit],
         profile: PromptProfile,
         contextBudget: ContextBudgetReport
     ) async -> LumiReply {
         let assistant = await appendMessage(role: .assistant, content: completion.content)
         await reflections.record(input: input, intent: intent, response: completion.content)
-        let citationReport = citationAssembler.assemble(
-            response: completion.content,
-            evidence: context
-        )
+        let citationReport = citationAssembler.assemble(response: completion.content, evidence: context)
 
         return LumiReply(
             message: assistant,
             intent: intent,
             context: context,
+            memories: memories,
             profile: profile.name,
             runtime: completion.runtime,
             contextBudget: contextBudget,
@@ -336,9 +391,9 @@ public actor LumiEngine {
         ),
         KnowledgeDocument(
             id: "lumi-memory",
-            title: "Conversation memory",
-            text: "Conversation memory uses a bounded working buffer backed by durable conversation storage. Long-term semantic memory remains a separate future layer.",
-            tags: ["memory", "privacy"]
+            title: "Conversation and long-term memory",
+            text: "Conversation history, bounded working memory, and user-controlled long-term memory are separate layers. Long-term memory is persisted locally and has an explicit lifecycle.",
+            tags: ["memory", "privacy", "v4"]
         )
     ]
 }
