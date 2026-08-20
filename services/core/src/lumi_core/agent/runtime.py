@@ -77,6 +77,8 @@ class AgentRuntime:
         clean = message.strip()
         if not clean:
             raise ValueError("empty_message")
+        if self.context_manager is not None:
+            self.context_manager.validate_current_message(clean)
         if conversation_id is None:
             conversation_id = self.database.create_conversation(title=clean[:80])
         elif not self.database.conversation_exists(conversation_id):
