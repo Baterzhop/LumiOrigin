@@ -47,17 +47,20 @@ public struct RequestClassification: Codable, Hashable, Sendable {
     public let capabilities: Set<LumiCapability>
     public let confidence: Double
     public let risk: RiskLevel
+    public let reasons: [String]
 
     public init(
         mode: ExecutionMode,
         capabilities: Set<LumiCapability> = [],
         confidence: Double = 1,
-        risk: RiskLevel = .low
+        risk: RiskLevel = .low,
+        reasons: [String] = []
     ) {
         self.mode = mode
         self.capabilities = capabilities
         self.confidence = min(max(confidence, 0), 1)
         self.risk = risk
+        self.reasons = reasons
     }
 }
 
