@@ -108,9 +108,12 @@ public struct HeuristicRequestClassifier: RequestClassifying, Sendable {
         "рефлекс", "чому ти", "проаналізуй свою відповідь", "перевір свою відповідь"
     ]
 
+    /// Retrieval signals are intentionally phrased as requests, rather than the bare word
+    /// `search`. This avoids routing conceptual questions such as “explain binary search” into RAG.
     private let retrievalSignals = [
-        "search", "find", "look up", "document", "manual", "knowledge", "what does", "according to",
-        "знайди", "пошук", "пошукай", "документ", "мануал", "що в документі", "згідно з"
+        "search for", "search the", "search my", "search in", "find ", "look up", "document", "manual",
+        "knowledge", "what does", "according to",
+        "знайди", "пошукай", "пошук у", "пошук в", "документ", "мануал", "що в документі", "згідно з"
     ]
 
     private let fileSignals = [
