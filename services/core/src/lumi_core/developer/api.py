@@ -134,6 +134,16 @@ def build_developer_router(settings: Settings, database: Database, model_gateway
         except (ValueError, RepositoryError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    @router.post("/sessions/{session_id}/validate")
+    async def revalidate_developer_session(session_id: str, request: ExplicitApprovalRequest) -> dict:
+        if not request.approved_by_user:
+            raise HTTPException(status_code=400, detail="explicit_user_approval_required")
+        runtime = service.require_runtime()
+        try:
+            return (await runtime.revalidate(session_id)).model_dump()
+        except (ValueError, RepositoryError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @router.post("/sessions/{session_id}/deny-plan")
     def deny_developer_plan(session_id: str) -> dict:
         runtime = service.require_runtime()
