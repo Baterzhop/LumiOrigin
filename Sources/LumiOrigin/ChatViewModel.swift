@@ -20,8 +20,13 @@ final class ChatViewModel: ObservableObject {
     private let engine: LumiEngine
     private var sendTask: Task<Void, Never>?
 
-    init(engine: LumiEngine = LumiEngine()) {
+    init(
+        engine: LumiEngine = LumiEngine(
+            conversationStore: SQLiteConversationStore.defaultStore()
+        )
+    ) {
         self.engine = engine
+        restoreHistory()
     }
 
     func send() {
@@ -55,6 +60,7 @@ final class ChatViewModel: ObservableObject {
                         contextHits = reply.context
                         runtime = reply.runtime
                         applyRuntimeStatus(reply.runtime)
+                        await applyPersistenceStatusIfNeeded()
                     }
                 }
             } catch {
@@ -67,6 +73,7 @@ final class ChatViewModel: ObservableObject {
                     status = "Model error"
                     lastError = error.localizedDescription
                 }
+                await applyPersistenceStatusIfNeeded()
             }
 
             isSending = false
@@ -94,7 +101,29 @@ final class ChatViewModel: ObservableObject {
             lastError = nil
             status = "Local-first"
             isSending = false
+            await applyPersistenceStatusIfNeeded()
         }
+    }
+
+    private func restoreHistory() {
+        Task {
+            do {
+                let restored = try await engine.restoreConversation()
+                messages = restored
+                if !restored.isEmpty {
+                    status = "History restored"
+                }
+            } catch {
+                status = "Storage error"
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    private func applyPersistenceStatusIfNeeded() async {
+        guard let issue = await engine.persistenceIssue() else { return }
+        lastError = issue
+        status = "Not saved"
     }
 
     private func applyRuntimeStatus(_ runtime: RuntimeMetadata) {
