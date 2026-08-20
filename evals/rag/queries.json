@@ -1,0 +1,7 @@
+[
+  {"query": "What is the Ducati drain plug torque?", "relevant": "ducati"},
+  {"query": "What elevation is benchmark BM-17?", "relevant": "surveying"},
+  {"query": "Which TCP port is used for HTTPS?", "relevant": "network"},
+  {"query": "How many days are allowed to submit travel receipts?", "relevant": "finance"},
+  {"query": "What water temperature is recommended for espresso?", "relevant": "coffee"}
+]

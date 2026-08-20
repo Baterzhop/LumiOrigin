@@ -40,13 +40,13 @@ SQLite + vector/FTS indexes
 Owns task lifecycle: receive → plan → act → observe → finish. It must not perform file/network side effects directly.
 
 ### ModelGateway
-Normalizes model providers, timeouts, metadata, fallbacks, and later streaming/tool-call formats.
+Normalizes model providers, timeouts, metadata, fallbacks, and streaming formats.
 
 ### Storage
 Owns migrations and durable records. Higher layers never issue ad-hoc schema mutations.
 
 ### RAG
-Owns ingestion, chunk metadata, sparse+dense retrieval, rank fusion, reranking, and citations.
+Owns ingestion, chunk metadata, sparse+dense retrieval, rank fusion, reranking, citations, and retrieval evaluation.
 
 ### Tools
 Each tool exposes a typed schema, risk level, timeout, and executor. Tool proposals are evaluated by PolicyEngine before execution.
@@ -60,7 +60,7 @@ External documents, websites, emails, and tool output are **untrusted content**.
 
 ## Milestones
 
-### M0 — Foundation (this branch)
+### M0 — Foundation — implemented
 - modular Python service
 - SQLite migrations
 - provider abstraction
@@ -68,36 +68,39 @@ External documents, websites, emails, and tool output are **untrusted content**.
 - tool policy contracts
 - CI
 
-Exit gate: unit tests green on Linux/macOS and API smoke import passes.
+Exit gate: passed on Linux/macOS.
 
-### M1 — Streaming + native client
-- SSE/WebSocket event protocol
+### M1 — Streaming + native client — implemented
+- SSE event protocol
 - cancel generation
 - SwiftUI networking layer
 - model/runtime status UI
+- tested Swift transport package
 
-Exit gate: user sees token stream and can cancel without corrupting conversation state.
+Exit gate: backend lifecycle and client transport/build tests pass. A physical local Ollama/macOS end-to-end session remains a machine-specific acceptance test.
 
-### M2 — Real RAG
-- ingestion pipeline (PDF/Markdown/Text first)
-- chunk metadata + content hashes
-- SQLite FTS5/BM25
-- local embeddings
-- reciprocal-rank fusion
-- cached reranker
-- citations
-- RAG eval set (Recall@k, MRR, nDCG)
+### M2 — Grounded RAG — functional alpha implemented
+- PDF/Markdown/Text ingestion
+- content hashes + deterministic chunk IDs
+- SQLite FTS5 sparse retrieval
+- Ollama local embeddings
+- weighted reciprocal-rank fusion
+- optional cached CrossEncoder reranker
+- structured citations in API and SwiftUI
+- prompt-injection trust boundary for retrieved data
+- Recall@k / MRR / nDCG metrics
+- deterministic CI regression corpus and thresholds
 
-Exit gate: retrieval metrics exceed defined baseline and every grounded answer can surface sources.
+Exit gate: deterministic retrieval regression must stay above repository thresholds and every retrieved answer can surface structured sources. This gate protects plumbing/regressions; it is **not** evidence that RAG quality is proven on real-world data. A larger representative benchmark is required before beta.
 
-### M3 — Agent tools
+### M3 — Agent tools — next
 - typed tool registry
 - read-only filesystem/search tools first
 - policy/approval UX
-- task state machine + budgets
+- task state machine + step/time/tool budgets
 - tool audit log
 
-Exit gate: tool success and denial paths covered by integration/security tests.
+Exit gate: tool success, denial, timeout, malformed-argument, and approval paths covered by integration/security tests.
 
 ### M4 — Memory
 - summarization by token budget
