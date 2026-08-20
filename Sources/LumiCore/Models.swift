@@ -125,6 +125,7 @@ public struct LumiReply: Sendable {
     public let message: ChatMessage
     public let intent: LumiIntent
     public let context: [KnowledgeHit]
+    public let memories: [MemoryHit]
     public let profile: String
     public let runtime: RuntimeMetadata
     public let contextBudget: ContextBudgetReport
@@ -134,6 +135,7 @@ public struct LumiReply: Sendable {
         message: ChatMessage,
         intent: LumiIntent,
         context: [KnowledgeHit],
+        memories: [MemoryHit] = [],
         profile: String,
         runtime: RuntimeMetadata,
         contextBudget: ContextBudgetReport,
@@ -142,6 +144,7 @@ public struct LumiReply: Sendable {
         self.message = message
         self.intent = intent
         self.context = context
+        self.memories = memories
         self.profile = profile
         self.runtime = runtime
         self.contextBudget = contextBudget
