@@ -97,6 +97,7 @@ public enum RuntimePhase: String, Codable, Sendable {
     case idle
     case loadingConversation
     case persistingUserMessage
+    case retrievingKnowledge
     case waitingForModel
     case executingTool
     case awaitingPermission
