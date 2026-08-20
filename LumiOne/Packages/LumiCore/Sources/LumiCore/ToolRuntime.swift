@@ -135,6 +135,10 @@ public protocol Tool: Sendable {
     func execute(_ input: Input) async throws -> Output
     func warnings(for input: Input, output: Output) -> [ToolWarning]
     func metadata(for input: Input, output: Output) -> [String: JSONValue]
+    /// Durable protocol-history representation of tool arguments. Sensitive
+    /// tools may redact fields that should not be duplicated into hidden chat
+    /// history while preserving enough structure for a valid tool round-trip.
+    func historyArguments(for input: Input) throws -> JSONValue
 }
 
 public extension Tool {
@@ -148,6 +152,11 @@ public extension Tool {
 
     func warnings(for input: Input, output: Output) -> [ToolWarning] { [] }
     func metadata(for input: Input, output: Output) -> [String: JSONValue] { [:] }
+
+    func historyArguments(for input: Input) throws -> JSONValue {
+        let data = try JSONEncoder().encode(input)
+        return try JSONDecoder().decode(JSONValue.self, from: data)
+    }
 }
 
 public struct ToolCall: Identifiable, Equatable, Sendable {
@@ -246,6 +255,7 @@ public struct AnyTool: Sendable {
     public let descriptor: ToolDescriptor
 
     private let permissionResolver: @Sendable (Data) throws -> PermissionRequest
+    private let historyArgumentResolver: @Sendable (Data) throws -> JSONValue
     private let executor: @Sendable (Data) async throws -> ErasedToolResult
 
     public init<T: Tool>(_ tool: T) {
@@ -255,6 +265,20 @@ public struct AnyTool: Sendable {
             do {
                 let input = try JSONDecoder().decode(T.Input.self, from: data)
                 return try tool.permissionRequest(for: input)
+            } catch let error as ToolRuntimeError {
+                throw error
+            } catch {
+                throw ToolRuntimeError.invalidArguments(
+                    tool: T.descriptor.registryKey,
+                    details: String(describing: error)
+                )
+            }
+        }
+
+        historyArgumentResolver = { data in
+            do {
+                let input = try JSONDecoder().decode(T.Input.self, from: data)
+                return try tool.historyArguments(for: input)
             } catch let error as ToolRuntimeError {
                 throw error
             } catch {
@@ -296,6 +320,10 @@ public struct AnyTool: Sendable {
 
     func permissionRequest(arguments: Data) throws -> PermissionRequest {
         try permissionResolver(arguments)
+    }
+
+    func historyArguments(arguments: Data) throws -> JSONValue {
+        try historyArgumentResolver(arguments)
     }
 
     fileprivate func execute(arguments: Data) async throws -> ErasedToolResult {
@@ -351,6 +379,13 @@ public actor ToolRuntime {
         duration: GrantDuration
     ) async -> PermissionGrant {
         await permissions.grant(request, duration: duration)
+    }
+
+    public func historyArguments(for call: ToolCall) throws -> JSONValue {
+        guard let tool = registry.resolve(name: call.name, version: call.version) else {
+            throw ToolRuntimeError.unknownTool(name: call.name, version: call.version)
+        }
+        return try tool.historyArguments(arguments: call.arguments)
     }
 
     public func execute(_ call: ToolCall) async throws -> ToolExecutionOutcome {
