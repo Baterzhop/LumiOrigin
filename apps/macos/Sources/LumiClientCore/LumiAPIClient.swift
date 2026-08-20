@@ -36,6 +36,37 @@ public struct LumiAPIClient: Sendable {
         return try JSONDecoder().decode(RuntimeStatusResponse.self, from: data)
     }
 
+    public func knowledgeDocuments() async throws -> [KnowledgeDocumentDTO] {
+        let (data, response) = try await URLSession.shared.data(from: endpoint("v1", "knowledge", "documents"))
+        try validate(response)
+        return try JSONDecoder().decode(KnowledgeDocumentsResponse.self, from: data).documents
+    }
+
+    public func uploadKnowledge(fileURL: URL) async throws -> KnowledgeUploadResponse {
+        let fileData = try Data(contentsOf: fileURL)
+        let boundary = "LumiBoundary-\(UUID().uuidString)"
+        var body = Data()
+
+        func append(_ string: String) {
+            body.append(contentsOf: string.utf8)
+        }
+
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileURL.lastPathComponent)\"\r\n")
+        append("Content-Type: application/octet-stream\r\n\r\n")
+        body.append(fileData)
+        append("\r\n--\(boundary)--\r\n")
+
+        var request = URLRequest(url: endpoint("v1", "knowledge", "upload"))
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response)
+        return try JSONDecoder().decode(KnowledgeUploadResponse.self, from: data)
+    }
+
     public func streamChat(message: String, conversationID: String?) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -44,13 +75,10 @@ public struct LumiAPIClient: Sendable {
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    request.httpBody = try JSONEncoder().encode(
-                        ChatRequestDTO(message: message, conversationID: conversationID)
-                    )
+                    request.httpBody = try JSONEncoder().encode(ChatRequestDTO(message: message, conversationID: conversationID))
 
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     try validate(response)
-
                     var dataLines: [String] = []
                     let decoder = JSONDecoder()
 
@@ -65,9 +93,7 @@ public struct LumiAPIClient: Sendable {
                     }
 
                     for try await line in bytes.lines {
-                        if Task.isCancelled {
-                            throw CancellationError()
-                        }
+                        if Task.isCancelled { throw CancellationError() }
                         if line.isEmpty {
                             try flush()
                             continue
@@ -83,9 +109,7 @@ public struct LumiAPIClient: Sendable {
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
-            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
         }
     }
 
@@ -97,17 +121,11 @@ public struct LumiAPIClient: Sendable {
     }
 
     private func endpoint(_ components: String...) -> URL {
-        components.reduce(baseURL) { partial, component in
-            partial.appendingPathComponent(component)
-        }
+        components.reduce(baseURL) { partial, component in partial.appendingPathComponent(component) }
     }
 
     private func validate(_ response: URLResponse) throws {
-        guard let http = response as? HTTPURLResponse else {
-            throw ClientError.invalidResponse
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw ClientError.httpStatus(http.statusCode)
-        }
+        guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw ClientError.httpStatus(http.statusCode) }
     }
 }

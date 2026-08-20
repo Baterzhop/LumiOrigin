@@ -13,6 +13,9 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var providerName = "—"
     @Published private(set) var conversationID: String?
     @Published private(set) var generationID: String?
+    @Published private(set) var knowledgeStatus = "No documents loaded"
+    @Published private(set) var documentCount = 0
+    @Published private(set) var isImportingKnowledge = false
 
     private let api: LumiAPIClient
     private var streamTask: Task<Void, Never>?
@@ -29,20 +32,50 @@ final class ChatViewModel: ObservableObject {
             modelName = runtime.model
             providerName = runtime.provider
             status = health.ok && runtime.ok ? "Core ready" : "Core degraded"
+            await refreshKnowledge()
         } catch {
             status = "Core offline"
+        }
+    }
+
+    func refreshKnowledge() async {
+        do {
+            let documents = try await api.knowledgeDocuments()
+            documentCount = documents.count
+            knowledgeStatus = documents.isEmpty ? "No documents loaded" : "\(documents.count) document(s) indexed"
+        } catch {
+            knowledgeStatus = "Knowledge unavailable"
+        }
+    }
+
+    func importKnowledge(_ url: URL) {
+        guard !isImportingKnowledge else { return }
+        isImportingKnowledge = true
+        knowledgeStatus = "Importing \(url.lastPathComponent)…"
+        Task {
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer {
+                if didAccess { url.stopAccessingSecurityScopedResource() }
+            }
+            do {
+                let result = try await api.uploadKnowledge(fileURL: url)
+                let dense = result.embeddingError == nil && result.embeddingModel != nil ? "dense ready" : "sparse ready"
+                knowledgeStatus = "\(result.title): \(result.chunkCount) chunks, \(dense)"
+                await refreshKnowledge()
+            } catch {
+                knowledgeStatus = "Import failed: \(error.localizedDescription)"
+            }
+            isImportingKnowledge = false
         }
     }
 
     func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isGenerating else { return }
-
         input = ""
         isGenerating = true
         status = "Connecting…"
         generationID = nil
-
         messages.append(ChatBubble(role: .user, content: text))
         let assistantID = UUID()
         messages.append(ChatBubble(id: assistantID, role: .assistant, content: ""))
@@ -58,9 +91,7 @@ final class ChatViewModel: ObservableObject {
                 if isGenerating {
                     isGenerating = false
                     generationID = nil
-                    if status == "Generating" || status == "Connecting…" {
-                        status = "Stream ended"
-                    }
+                    if status == "Generating" || status == "Connecting…" { status = "Stream ended" }
                 }
             } catch is CancellationError {
                 isGenerating = false
@@ -85,9 +116,7 @@ final class ChatViewModel: ObservableObject {
             streamTask?.cancel()
             return
         }
-        Task {
-            try? await api.cancelGeneration(generationID)
-        }
+        Task { try? await api.cancelGeneration(generationID) }
     }
 
     func newConversation() {
@@ -101,23 +130,21 @@ final class ChatViewModel: ObservableObject {
     private func consume(_ event: ChatStreamEvent, assistantID: UUID) {
         conversationID = event.conversationID
         generationID = event.generationID
-
         guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
+        if let citations = event.citations, !citations.isEmpty {
+            messages[index].citations = citations
+        }
 
         switch event.type {
         case .started:
-            status = "Generating"
+            status = messages[index].citations.isEmpty ? "Generating" : "Generating with \(messages[index].citations.count) source(s)"
         case .delta:
-            if let delta = event.delta {
-                messages[index].content += delta
-            }
+            if let delta = event.delta { messages[index].content += delta }
             messages[index].provider = event.provider
             messages[index].model = event.model
             status = event.fallback == true ? "Fallback mode" : "Generating"
         case .completed:
-            if messages[index].content.isEmpty, let content = event.content {
-                messages[index].content = content
-            }
+            if messages[index].content.isEmpty, let content = event.content { messages[index].content = content }
             messages[index].provider = event.provider
             messages[index].model = event.model
             messages[index].finishReason = event.finishReason
@@ -127,9 +154,7 @@ final class ChatViewModel: ObservableObject {
             modelName = event.model ?? modelName
             status = event.fallback == true ? "Fallback complete" : (event.error == nil ? "Ready" : "Completed with model error")
         case .cancelled:
-            if messages[index].content.isEmpty, let content = event.content {
-                messages[index].content = content
-            }
+            if messages[index].content.isEmpty, let content = event.content { messages[index].content = content }
             messages[index].finishReason = "cancelled"
             isGenerating = false
             generationID = nil

@@ -1,46 +1,48 @@
-# Lumi V4 — Foundation + M1
+# Lumi V4 — Foundation + M1 + M2
 
-Lumi V4 is a ground-up redesign of Lumi as a local-first AI assistant platform rather than a single chat class.
+Lumi V4 is a ground-up redesign of Lumi as a local-first AI assistant platform rather than a single chat class. The current branch is a modular monolith: one Python core service, durable SQLite state, explicit model/tool contracts, and a native SwiftUI client.
 
-The current branch is a **modular monolith**: one Python core service, durable SQLite state, explicit model/tool contracts, and a native SwiftUI client. AI orchestration stays outside the UI process.
-
-## Architecture
+## Working architecture
 
 ```text
 macOS SwiftUI client
         │
-        │ HTTP + SSE
+        │ HTTP + SSE + document upload
         ▼
 Lumi Core (Python)
   ├─ API + generation registry
   ├─ Agent runtime
   ├─ Model gateway
-  ├─ Memory/storage
-  ├─ Tool policy contracts
-  ├─ RAG contracts
-  └─ Observability hooks
+  ├─ RAG
+  │   ├─ PDF / Markdown / Text ingestion
+  │   ├─ SQLite FTS5 sparse retrieval
+  │   ├─ Ollama dense embeddings
+  │   ├─ weighted RRF fusion
+  │   ├─ optional cached CrossEncoder reranker
+  │   └─ structured citations
+  ├─ SQLite storage + migrations
+  └─ Tool policy contracts
         │
-        ├─ SQLite (canonical local state)
-        └─ Ollama-compatible local model
+        ├─ SQLite canonical state
+        └─ Ollama-compatible local models
 ```
 
 ## What works now
 
-- FastAPI core with `/health`, `/v1/runtime`, `/v1/chat`, and `/v1/chat/stream`.
-- Real SSE token streaming from Ollama-compatible providers.
-- Structured stream lifecycle: `started → delta* → completed|cancelled|error`.
-- Generation cancellation through `/v1/generations/{id}/cancel`.
-- Visible partial assistant output is persisted safely when cancellation occurs.
-- Durable SQLite schema + migration runner.
-- Provider/model/fallback/error/finish metadata stored with assistant messages.
-- Native SwiftUI macOS client with streaming chat, Stop control, runtime/model status, and conversation IDs.
-- Separate `LumiClientCore` Swift transport module with tests.
-- Tool risk policy contract (low/medium/high/critical).
-- CI on Linux and macOS, including Python tests, API SSE integration test, Swift build, and Swift tests.
-
-## Not claimed yet
-
-V4 is not yet a full autonomous agent. Dense embeddings, reranking, document ingestion, citations, real tool execution, long-term semantic memory, context budgeting, and agent planning remain separate milestones.
+- FastAPI core with health/runtime/chat/stream APIs.
+- Real SSE generation with explicit cancellation.
+- Native SwiftUI client with streaming chat and Stop control.
+- Durable conversations/messages with provider/model/finish metadata.
+- PDF, Markdown and text knowledge import.
+- Content-hash deduplication and deterministic chunk IDs.
+- SQLite FTS5 sparse retrieval.
+- Dense embeddings via Ollama `/api/embed` (default model `embeddinggemma`).
+- Weighted Reciprocal Rank Fusion instead of mixing incompatible raw score scales.
+- Optional lazy cached sentence-transformers CrossEncoder reranker.
+- Structured citations returned by the API and displayed in the macOS client.
+- Retrieval context is explicitly treated as untrusted data, not system instructions.
+- Baseline Recall@k, reciprocal-rank and nDCG metrics.
+- Python tests on Linux/macOS plus Swift build/tests in CI.
 
 ## Run Lumi Core
 
@@ -51,24 +53,23 @@ python -m pip install -e "services/core[dev]"
 uvicorn lumi_core.api.main:app --reload --port 8790
 ```
 
-Optional local model:
+Optional local models:
 
 ```bash
 export LUMI_OLLAMA_URL=http://127.0.0.1:11434/api/chat
 export LUMI_OLLAMA_MODEL=llama3.2
+export LUMI_OLLAMA_EMBED_URL=http://127.0.0.1:11434/api/embed
+export LUMI_EMBEDDING_MODEL=embeddinggemma
 ```
 
-Streaming smoke request:
+To enable the optional CrossEncoder reranker:
 
 ```bash
-curl -N -X POST http://127.0.0.1:8790/v1/chat/stream \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"Hello Lumi"}'
+python -m pip install -e "services/core[rerank]"
+export LUMI_RERANKER_MODEL=<cross-encoder-model>
 ```
 
-## Run the macOS client
-
-With Lumi Core already running:
+## Run macOS client
 
 ```bash
 cd apps/macos
@@ -84,4 +85,4 @@ pytest services/core/tests
 cd apps/macos && swift test
 ```
 
-See `docs/architecture.md` for the roadmap and `docs/event-protocol.md` for the M1 transport contract.
+See `docs/architecture.md`, `docs/event-protocol.md`, and `docs/rag.md` for design contracts and current limitations.

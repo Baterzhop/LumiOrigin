@@ -1,4 +1,5 @@
 import Foundation
+import LumiClientCore
 
 struct ChatBubble: Identifiable, Equatable {
     enum Role: String {
@@ -12,6 +13,7 @@ struct ChatBubble: Identifiable, Equatable {
     var provider: String?
     var model: String?
     var finishReason: String?
+    var citations: [CitationDTO]
 
     init(
         id: UUID = UUID(),
@@ -19,7 +21,8 @@ struct ChatBubble: Identifiable, Equatable {
         content: String,
         provider: String? = nil,
         model: String? = nil,
-        finishReason: String? = nil
+        finishReason: String? = nil,
+        citations: [CitationDTO] = []
     ) {
         self.id = id
         self.role = role
@@ -27,5 +30,6 @@ struct ChatBubble: Identifiable, Equatable {
         self.provider = provider
         self.model = model
         self.finishReason = finishReason
+        self.citations = citations
     }
 }
