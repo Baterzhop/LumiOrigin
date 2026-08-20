@@ -74,27 +74,18 @@ class DeveloperStore:
     def get(self, session_id: str) -> DeveloperSessionView | None:
         with self.database.connect() as connection:
             row = connection.execute(
-                """
-                SELECT id, goal, status, repository_root, base_branch, branch_name,
-                       proposal_json, proposed_diff, checks_json, validation_json,
-                       commit_sha, pr_url, error, created_at, updated_at
-                FROM developer_sessions WHERE id = ?
-                """,
+                self._select_sql() + " WHERE id = ?",
                 (session_id,),
             ).fetchone()
-        if not row:
-            return None
-        item = dict(row)
-        proposal_raw = item.pop("proposal_json")
-        checks_raw = item.pop("checks_json")
-        validation_raw = item.pop("validation_json")
-        item["proposal"] = DeveloperProposal.model_validate_json(proposal_raw) if proposal_raw else None
-        item["checks"] = json.loads(checks_raw or "[]")
-        item["validation"] = [
-            DeveloperCheckResult.model_validate(value)
-            for value in json.loads(validation_raw or "[]")
-        ]
-        return DeveloperSessionView.model_validate(item)
+        return self._decode(row) if row else None
+
+    def list(self, limit: int = 20) -> list[DeveloperSessionView]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                self._select_sql() + " ORDER BY updated_at DESC, rowid DESC LIMIT ?",
+                (max(1, min(limit, 100)),),
+            ).fetchall()
+        return [self._decode(row) for row in rows]
 
     def add_event(self, session_id: str, event_type: str, payload: dict[str, Any] | None = None) -> None:
         with self.database.connect() as connection:
@@ -115,3 +106,26 @@ class DeveloperStore:
             item["payload"] = json.loads(item.pop("payload_json") or "{}")
             result.append(item)
         return result
+
+    @staticmethod
+    def _select_sql() -> str:
+        return """
+            SELECT id, goal, status, repository_root, base_branch, branch_name,
+                   proposal_json, proposed_diff, checks_json, validation_json,
+                   commit_sha, pr_url, error, created_at, updated_at
+            FROM developer_sessions
+        """
+
+    @staticmethod
+    def _decode(row) -> DeveloperSessionView:
+        item = dict(row)
+        proposal_raw = item.pop("proposal_json")
+        checks_raw = item.pop("checks_json")
+        validation_raw = item.pop("validation_json")
+        item["proposal"] = DeveloperProposal.model_validate_json(proposal_raw) if proposal_raw else None
+        item["checks"] = json.loads(checks_raw or "[]")
+        item["validation"] = [
+            DeveloperCheckResult.model_validate(value)
+            for value in json.loads(validation_raw or "[]")
+        ]
+        return DeveloperSessionView.model_validate(item)
