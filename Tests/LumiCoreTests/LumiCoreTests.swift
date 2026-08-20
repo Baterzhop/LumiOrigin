@@ -29,6 +29,8 @@ final class LumiCoreTests: XCTestCase {
         let engine = LumiEngine(llm: LocalFallbackClient())
         let reply = await engine.respond(to: "hello", profile: "chat")
         XCTAssertEqual(reply.intent, .chat)
+        XCTAssertEqual(reply.runtime.provider, .localFallback)
+        XCTAssertTrue(reply.runtime.fallbackUsed)
 
         let messages = await engine.messages()
         XCTAssertEqual(messages.count, 2)
@@ -37,5 +39,19 @@ final class LumiCoreTests: XCTestCase {
 
         let reflections = await engine.recentReflections()
         XCTAssertEqual(reflections.count, 1)
+    }
+
+    func testEngineUsesIntentProfileWhenNoOverrideIsProvided() async {
+        let engine = LumiEngine(llm: LocalFallbackClient())
+        let reply = await engine.respond(to: "Please refactor this Swift code")
+
+        XCTAssertEqual(reply.intent, .coding)
+        XCTAssertEqual(reply.profile, "coding")
+    }
+
+    func testLumiRequestCarriesOptionalProfileOverride() {
+        let request = LumiRequest(input: "hello", profileOverride: nil)
+        XCTAssertEqual(request.input, "hello")
+        XCTAssertNil(request.profileOverride)
     }
 }
