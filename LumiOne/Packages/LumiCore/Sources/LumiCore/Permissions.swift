@@ -85,8 +85,10 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
     public let reason: String
     public let resourceDisplayName: String?
     public let resourceLocationHint: String?
-    /// Code-owned structured details for an approval UI. These values are display
-    /// metadata only and never participate in authorization matching.
+    /// Code-owned structured operation details. They are available to the
+    /// approval UI and are also part of authorization matching. This prevents a
+    /// grant for one exact mutation (for example memory value A) from silently
+    /// authorizing a different mutation on the same resource (memory value B).
     public let details: [String: String]
 
     public init(
@@ -112,6 +114,7 @@ public struct PermissionGrant: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let capability: ToolCapability
     public let resource: ResourceScope
+    public let operationDetails: [String: String]
     public let duration: GrantDuration
     public let createdAt: Date
 
@@ -119,12 +122,14 @@ public struct PermissionGrant: Identifiable, Equatable, Sendable {
         id: UUID = UUID(),
         capability: ToolCapability,
         resource: ResourceScope,
+        operationDetails: [String: String] = [:],
         duration: GrantDuration,
         createdAt: Date = Date()
     ) {
         self.id = id
         self.capability = capability
         self.resource = resource
+        self.operationDetails = operationDetails
         self.duration = duration
         self.createdAt = createdAt
     }
@@ -146,8 +151,9 @@ public actor PermissionEngine {
             ? requestedDuration
             : .once
 
-        // Keep exactly one active grant for a capability/resource pair so
-        // authorization is deterministic even when the user changes duration.
+        // Keep exactly one active grant for a capability/resource pair. Granting
+        // a new exact operation for that resource invalidates any older operation
+        // binding, so stale approvals cannot remain active in parallel.
         let duplicates = grants.values
             .filter { $0.capability == request.capability && $0.resource == request.resource }
             .map(\.id)
@@ -158,6 +164,7 @@ public actor PermissionEngine {
         let grant = PermissionGrant(
             capability: request.capability,
             resource: request.resource,
+            operationDetails: request.details,
             duration: effectiveDuration
         )
         grants[grant.id] = grant
@@ -172,11 +179,15 @@ public actor PermissionEngine {
         grants.removeAll()
     }
 
-    /// Returns true only when an explicit matching grant exists.
-    /// A one-time grant is consumed by the authorization attempt.
+    /// Returns true only when an explicit matching grant exists. The exact
+    /// code-owned operation details are part of the binding in addition to the
+    /// capability and resource. A one-time grant is consumed by the successful
+    /// authorization attempt.
     public func authorize(_ request: PermissionRequest) -> Bool {
         guard let match = grants.values.first(where: {
-            $0.capability == request.capability && $0.resource == request.resource
+            $0.capability == request.capability &&
+            $0.resource == request.resource &&
+            $0.operationDetails == request.details
         }) else {
             return false
         }
