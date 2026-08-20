@@ -85,6 +85,22 @@ public struct ModelUsage: Codable, Hashable, Sendable {
     }
 }
 
+public struct ModelRequest: Codable, Hashable, Sendable {
+    public let messages: [ChatMessage]
+    public let systemPrompt: String
+    public let profile: PromptProfile
+
+    public init(
+        messages: [ChatMessage],
+        systemPrompt: String,
+        profile: PromptProfile
+    ) {
+        self.messages = messages
+        self.systemPrompt = systemPrompt
+        self.profile = profile
+    }
+}
+
 public struct RuntimeMetadata: Codable, Hashable, Sendable {
     public let provider: ModelProvider
     public let model: String
@@ -123,6 +139,11 @@ public struct ModelResponse: Codable, Hashable, Sendable {
 public enum ModelEvent: Sendable, Hashable {
     case token(String)
     case completed(ModelResponse)
+}
+
+public enum LumiStreamEvent: Sendable {
+    case token(String)
+    case completed(LumiReply)
 }
 
 public enum LumiRuntimeError: Error, LocalizedError, Sendable {
