@@ -11,9 +11,30 @@ export LUMI_DEV_REPO_ROOT="$HOME/Projects/Lumi-dev-worktree"
 export LUMI_DEV_BASE_BRANCH=main
 ```
 
-If `LUMI_DEV_REPO_ROOT` points at the source tree from which the current Lumi Core is running, the developer API is disabled. This prevents direct runtime self-modification.
+If `LUMI_DEV_REPO_ROOT` overlaps the source tree from which the current Lumi Core is running, the developer API is disabled. This prevents direct runtime self-modification.
 
-Draft pull-request publishing is optional and requires an explicit fixed GitHub repository plus a token supplied only through the process environment:
+## Local validation is opt-in
+
+Repository tests execute code from the developer checkout. For that reason Lumi disables local check execution by default.
+
+To allow the fixed validation profiles after you review and approve a proposal:
+
+```bash
+export LUMI_DEV_ALLOW_LOCAL_CHECKS=true
+```
+
+If a proposal requires checks while this setting is disabled, Lumi records the checks as `skipped`, moves the session to `validation_incomplete`, and **blocks publishing**. This is deliberate fail-closed behavior.
+
+The model never supplies validation commands. Lumi can only select fixed profiles from code:
+
+- `python-core-tests` → Python core pytest suite;
+- `rag-regression` → deterministic RAG gate;
+- `memory-regression` → deterministic memory gate;
+- `swift-tests` → native macOS Swift package tests.
+
+## Optional GitHub draft-PR publishing
+
+Publishing requires an explicit fixed repository plus a token supplied only through the process environment:
 
 ```bash
 export LUMI_DEV_GITHUB_REPOSITORY="owner/repository"
@@ -39,7 +60,9 @@ create isolated lumi/dev-* branch
   ↓
 apply exact approved UTF-8 create/replace operations
   ↓
-run fixed allow-listed check profiles
+run fixed allow-listed check profiles (only if explicitly enabled)
+  ↓
+all required checks must PASS
   ↓
 render actual diff + validation results
   ↓
@@ -56,7 +79,7 @@ STOP — never auto-merge
 
 Planning is read-only. No branch, file, commit, push, or pull request is created until the first approval.
 
-Publishing is a second independent approval. Passing tests does not grant publish permission.
+Publishing is a second independent approval. Passing tests does not grant publish permission, and incomplete validation cannot be published.
 
 ## Allowed file operations
 
@@ -76,18 +99,7 @@ The planner cannot request:
 - arbitrary HTTP requests;
 - automatic merge.
 
-All proposed paths are resolved against the configured repository root before any approval is requested.
-
-## Test execution
-
-The model does not supply commands. Lumi selects from fixed profiles based on changed paths:
-
-- `python-core-tests` → Python core pytest suite;
-- `rag-regression` → deterministic RAG gate;
-- `memory-regression` → deterministic memory gate;
-- `swift-tests` → native macOS Swift package tests.
-
-These commands execute repository code, so they only run **after** the user approves the proposal that produced those changes.
+All proposed paths are resolved against the configured repository root before any approval is requested. Symlink escapes are also rejected after path resolution.
 
 ## Repository invariants
 
@@ -98,6 +110,7 @@ Lumi fails closed when:
 - the repository changes between proposal generation and approval;
 - a proposal contains duplicate, escaping, missing, or contradictory file operations;
 - unexpected worktree paths appear before publish;
+- required validation fails or is skipped;
 - the model falls back or emits malformed proposal JSON;
 - GitHub publishing is not configured.
 
@@ -122,6 +135,7 @@ Credentials are excluded from this state.
 - Only complete-file `create`/`replace` edits are supported; patch hunks and rename/delete are intentionally absent.
 - Repository inspection is bounded and heuristic; large repositories need a dedicated code index later.
 - Fixed check profiles are Lumi-specific and will need a manifest/plugin mechanism for arbitrary projects.
+- Local check execution is disabled by default and must be explicitly enabled because tests execute repository code.
 - Publishing currently targets GitHub only.
 - A failed application may leave an isolated local developer branch for manual inspection; it is never pushed automatically.
 - CI verifies the workflow against temporary Git repositories and a fake PR publisher. A real local Ollama + real GitHub-token end-to-end session remains a machine-specific acceptance test.
