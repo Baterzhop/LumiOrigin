@@ -3,6 +3,9 @@ import PackageDescription
 
 let package = Package(
     name: "LumiCore",
+    platforms: [
+        .macOS(.v13)
+    ],
     products: [
         .library(name: "LumiCore", targets: ["LumiCore"])
     ],

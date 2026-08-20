@@ -32,7 +32,10 @@ public actor SQLiteConversationStore: ConversationStore {
         let result = sqlite3_open_v2(url.path, &handle, flags, nil)
 
         guard result == SQLITE_OK, let handle else {
-            let message = handle.flatMap { sqlite3_errmsg($0) }.map(String.init(cString:)) ?? "unknown error"
+            let message = handle
+                .flatMap { sqlite3_errmsg($0) }
+                .map { String(cString: $0) }
+                ?? "unknown error"
             if let handle { sqlite3_close(handle) }
             throw SQLiteStoreError.openFailed(message)
         }
@@ -215,7 +218,9 @@ public actor SQLiteConversationStore: ConversationStore {
     private static func execute(_ db: OpaquePointer, sql: String) throws {
         var errorPointer: UnsafeMutablePointer<CChar>?
         guard sqlite3_exec(db, sql, nil, nil, &errorPointer) == SQLITE_OK else {
-            let message = errorPointer.map(String.init(cString:)) ?? String(cString: sqlite3_errmsg(db))
+            let message = errorPointer
+                .map { String(cString: $0) }
+                ?? String(cString: sqlite3_errmsg(db))
             if let errorPointer { sqlite3_free(errorPointer) }
             throw SQLiteStoreError.executionFailed(message)
         }
