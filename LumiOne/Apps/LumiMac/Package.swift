@@ -10,10 +10,24 @@ let package = Package(
         .package(path: "../../Packages/LumiCore")
     ],
     targets: [
+        .target(
+            name: "LumiMacSupport",
+            dependencies: [
+                .product(name: "LumiCore", package: "LumiCore")
+            ]
+        ),
         .executableTarget(
             name: "LumiMac",
             dependencies: [
-                .product(name: "LumiCore", package: "LumiCore")
+                .product(name: "LumiCore", package: "LumiCore"),
+                "LumiMacSupport"
+            ]
+        ),
+        .testTarget(
+            name: "LumiMacSupportTests",
+            dependencies: [
+                .product(name: "LumiCore", package: "LumiCore"),
+                "LumiMacSupport"
             ]
         )
     ]
