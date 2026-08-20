@@ -12,6 +12,10 @@ struct ContentView: View {
                 Divider()
                 selectedFileBar
             }
+            if model.isMemoryAvailable {
+                Divider()
+                memoryPanel
+            }
             Divider()
             conversation
             if !model.lastCitations.isEmpty {
@@ -39,6 +43,12 @@ struct ContentView: View {
 
             if !model.knowledgeDocuments.isEmpty {
                 Text("Knowledge: \(model.knowledgeDocuments.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if model.isMemoryAvailable {
+                Text("Memory: \(model.memories.count)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -107,6 +117,50 @@ struct ContentView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
         }
+    }
+
+    private var memoryPanel: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Label("Long-term Memory", systemImage: "tray.full")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Text("User-controlled · local")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal)
+
+            if model.memories.isEmpty {
+                Text("No persistent memories. Lumi only stores one when you explicitly approve a memory operation or edit Memory directly.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .padding(.bottom, 7)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(model.memories) { record in
+                            MemoryEditorCard(
+                                record: record,
+                                disabled: model.isSending || model.pendingApproval != nil,
+                                onSave: { value in
+                                    model.updateMemory(record, value: value)
+                                },
+                                onForget: {
+                                    model.forgetMemory(record)
+                                }
+                            )
+                            .id(record.currentRevision.id)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                }
+            }
+        }
+        .padding(.top, 8)
     }
 
     private var citationBar: some View {
@@ -190,8 +244,13 @@ struct ContentView: View {
                 .font(.subheadline)
 
             if let displayName = pending.permission.resourceDisplayName {
-                Label(displayName, systemImage: "doc")
-                    .font(.subheadline)
+                Label(
+                    displayName,
+                    systemImage: pending.permission.resource.kind == .userMemory
+                        ? "tray.full"
+                        : "doc"
+                )
+                .font(.subheadline)
             }
 
             if let location = pending.permission.resourceLocationHint {
@@ -199,6 +258,10 @@ struct ContentView: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+            }
+
+            if pending.permission.resource.kind == .userMemory {
+                memoryPermissionDetails(pending)
             }
 
             Text("Capability: \(pending.permission.capability.rawValue)")
@@ -216,8 +279,10 @@ struct ContentView: View {
             HStack {
                 Button("Allow once") { model.approve(.once) }
                     .disabled(model.isSending)
-                Button("Allow for session") { model.approve(.session) }
-                    .disabled(model.isSending)
+                if pending.permission.capability.supportsSessionGrant {
+                    Button("Allow for session") { model.approve(.session) }
+                        .disabled(model.isSending)
+                }
                 Button("Deny", role: .cancel) { model.deny() }
                     .disabled(model.isSending)
                 Spacer()
@@ -225,6 +290,60 @@ struct ContentView: View {
         }
         .padding()
         .background(.quaternary.opacity(0.35))
+    }
+
+    @ViewBuilder
+    private func memoryPermissionDetails(_ pending: PendingToolApproval) -> some View {
+        let details = pending.permission.details
+
+        VStack(alignment: .leading, spacing: 5) {
+            if let existing = model.pendingMemoryExisting {
+                Text("Current value")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(existing.value)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                Text("Current revision: \(existing.revision)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Current value: none")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let proposedValue = details["proposedValue"] {
+                Text("Proposed value")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(proposedValue)
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
+
+            HStack(spacing: 10) {
+                if let kind = details["kind"] {
+                    Text("Kind: \(kind)")
+                }
+                if let confidence = details["confidence"] {
+                    Text("Confidence: \(confidence)")
+                }
+                if let revision = details["expectedRevision"] {
+                    Text("Expected rev: \(revision)")
+                }
+            }
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+
+            if details["operation"] == "forget" {
+                Text("This permanently removes the active memory and its stored revision payloads.")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+            }
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var composer: some View {
@@ -258,6 +377,67 @@ struct ContentView: View {
             }
         }
         .padding()
+    }
+}
+
+private struct MemoryEditorCard: View {
+    let record: UserMemoryRecord
+    let disabled: Bool
+    let onSave: (String) -> Void
+    let onForget: () -> Void
+
+    @State private var value: String
+
+    init(
+        record: UserMemoryRecord,
+        disabled: Bool,
+        onSave: @escaping (String) -> Void,
+        onForget: @escaping () -> Void
+    ) {
+        self.record = record
+        self.disabled = disabled
+        self.onSave = onSave
+        self.onForget = onForget
+        _value = State(initialValue: record.value)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(record.key)
+                .font(.caption.monospaced())
+                .fontWeight(.semibold)
+                .lineLimit(1)
+
+            Text("\(record.kind.rawValue) · rev \(record.revision) · confidence \(record.confidence)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            TextField("Memory value", text: $value, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...4)
+                .disabled(disabled)
+
+            HStack {
+                Button("Save") {
+                    onSave(value)
+                }
+                .disabled(
+                    disabled ||
+                    value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    value == record.value
+                )
+
+                Button("Forget", role: .destructive) {
+                    onForget()
+                }
+                .disabled(disabled)
+
+                Spacer()
+            }
+        }
+        .padding(10)
+        .frame(width: 300, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 #endif
