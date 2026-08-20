@@ -24,3 +24,13 @@ jobs:
         run: pytest services/core/tests -q
       - name: Import smoke
         run: python -c "from lumi_core.api.main import app; print(app.title, app.version)"
+
+  macos-client:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Build native client
+        working-directory: apps/macos
+        run: swift build
