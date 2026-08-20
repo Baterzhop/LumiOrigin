@@ -29,6 +29,14 @@ public extension LumiAPIClient {
         )
     }
 
+    func revalidateDeveloperSession(_ sessionID: String) async throws -> DeveloperSessionDTO {
+        try await sendDeveloperJSON(
+            developerEndpoint("sessions", sessionID, "validate"),
+            body: ExplicitApprovalRequestDTO(approvedByUser: true),
+            response: DeveloperSessionDTO.self
+        )
+    }
+
     func denyDeveloperPlan(_ sessionID: String) async throws -> DeveloperSessionDTO {
         var request = URLRequest(url: developerEndpoint("sessions", sessionID, "deny-plan"))
         request.httpMethod = "POST"
