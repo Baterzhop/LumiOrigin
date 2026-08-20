@@ -23,6 +23,18 @@ public enum ToolCapability: String, Codable, Sendable {
     case externalAction
     case systemCommand
     case modifyCode
+
+    /// Persistent personal-memory mutation is always approved per operation.
+    /// A session-scoped grant would otherwise authorize later model-proposed
+    /// value changes for the same logical key without another user decision.
+    public var supportsSessionGrant: Bool {
+        switch self {
+        case .writeUserMemory, .deleteUserMemory:
+            return false
+        default:
+            return true
+        }
+    }
 }
 
 public struct ResourceScope: Hashable, Codable, Sendable {
@@ -121,8 +133,14 @@ public actor PermissionEngine {
     @discardableResult
     public func grant(
         _ request: PermissionRequest,
-        duration: GrantDuration
+        duration requestedDuration: GrantDuration
     ) -> PermissionGrant {
+        // Some mutation capabilities are deliberately non-delegable across a
+        // session. Enforce this below the UI so alternate callers cannot bypass it.
+        let effectiveDuration: GrantDuration = request.capability.supportsSessionGrant
+            ? requestedDuration
+            : .once
+
         // Keep exactly one active grant for a capability/resource pair so
         // authorization is deterministic even when the user changes duration.
         let duplicates = grants.values
@@ -135,7 +153,7 @@ public actor PermissionEngine {
         let grant = PermissionGrant(
             capability: request.capability,
             resource: request.resource,
-            duration: duration
+            duration: effectiveDuration
         )
         grants[grant.id] = grant
         return grant
