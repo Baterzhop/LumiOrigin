@@ -79,6 +79,34 @@ final class LumiCoreTests: XCTestCase {
         XCTAssertEqual(messages.count, 2)
         XCTAssertEqual(messages.last?.content, "Hello")
     }
+
+    func testSQLiteStoreRestoresConversationAcrossEngineInstances() async throws {
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lumi-persistence-\(UUID().uuidString).sqlite3")
+        let conversationID = UUID()
+
+        let firstStore = SQLiteConversationStore(databaseURL: databaseURL)
+        let firstEngine = LumiEngine(
+            llm: ScriptedStreamingClient(),
+            conversationStore: firstStore,
+            conversationID: conversationID
+        )
+        _ = await firstEngine.respond(to: "persist me", profile: "chat")
+
+        let secondStore = SQLiteConversationStore(databaseURL: databaseURL)
+        let secondEngine = LumiEngine(
+            llm: ScriptedStreamingClient(),
+            conversationStore: secondStore,
+            conversationID: conversationID
+        )
+        let restored = try await secondEngine.restoreConversation()
+
+        XCTAssertEqual(restored.count, 2)
+        XCTAssertEqual(restored.first?.role, .user)
+        XCTAssertEqual(restored.first?.content, "persist me")
+        XCTAssertEqual(restored.last?.role, .assistant)
+        XCTAssertEqual(restored.last?.content, "Hello")
+    }
 }
 
 private struct ScriptedStreamingClient: LLMClient {
