@@ -4,16 +4,16 @@ import XCTest
 
 final class ToolRuntimeTests: XCTestCase {
     func testReadTextFileRequiresExplicitPermission() async throws {
-        let fixture = try TextFixture(content: "classified")
-        defer { fixture.cleanup() }
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(
+            content: "classified",
+            displayName: "secret.txt",
+            locationHint: "/Users/test/Documents/secret.txt"
+        )
 
         let permissions = PermissionEngine()
-        let runtime = try makeRuntime(permissions: permissions)
-        let call = try ToolCall.encoding(
-            name: "file.readText",
-            version: "1",
-            input: ReadTextFileInput(path: fixture.fileURL.path)
-        )
+        let runtime = try makeRuntime(permissions: permissions, broker: broker)
+        let call = try readCall(for: resourceID)
 
         let first = try await runtime.execute(call)
         guard case .permissionRequired(let request) = first else {
@@ -21,11 +21,10 @@ final class ToolRuntimeTests: XCTestCase {
         }
 
         XCTAssertEqual(request.capability, .readUserFile)
-        XCTAssertEqual(request.resource.kind, .file)
-        XCTAssertEqual(
-            request.resource.identifier,
-            fixture.fileURL.standardizedFileURL.resolvingSymlinksInPath().path
-        )
+        XCTAssertEqual(request.resource.kind, .userFile)
+        XCTAssertEqual(request.resource.identifier, resourceID.rawValue)
+        XCTAssertEqual(request.resourceDisplayName, "secret.txt")
+        XCTAssertEqual(request.resourceLocationHint, "/Users/test/Documents/secret.txt")
 
         _ = await permissions.grant(request, duration: .once)
 
@@ -39,21 +38,41 @@ final class ToolRuntimeTests: XCTestCase {
         }
 
         XCTAssertEqual(object["content"], .string("classified"))
+        XCTAssertEqual(object["resourceID"], .string(resourceID.rawValue))
+        XCTAssertEqual(object["displayName"], .string("secret.txt"))
         XCTAssertEqual(object["truncated"], .bool(false))
         XCTAssertEqual(result.descriptor.name, "file.readText")
         XCTAssertTrue(result.warnings.isEmpty)
         XCTAssertEqual(result.metadata["encoding"], .string("utf-8"))
+        XCTAssertEqual(result.metadata["resourceID"], .string(resourceID.rawValue))
         XCTAssertEqual(result.metadata["bytesRead"], .number(10))
         XCTAssertEqual(result.metadata["truncated"], .bool(false))
     }
 
-    func testOneTimeGrantIsConsumed() async throws {
-        let fixture = try TextFixture(content: "once")
-        defer { fixture.cleanup() }
-
+    func testUnknownResourceIDFailsBeforePermissionPrompt() async throws {
+        let broker = TestUserFileBroker()
         let permissions = PermissionEngine()
-        let runtime = try makeRuntime(permissions: permissions)
-        let call = try readCall(for: fixture.fileURL)
+        let runtime = try makeRuntime(permissions: permissions, broker: broker)
+        let unknown = UserFileResourceID(rawValue: "model-invented-resource")
+        let call = try readCall(for: unknown)
+
+        do {
+            _ = try await runtime.execute(call)
+            XCTFail("Unregistered resource IDs must fail closed before authorization")
+        } catch let error as ToolRuntimeError {
+            XCTAssertTrue(error.description.contains("Unknown user-file resource model-invented-resource."))
+        }
+
+        let grants = await permissions.activeGrants()
+        XCTAssertTrue(grants.isEmpty)
+    }
+
+    func testOneTimeGrantIsConsumed() async throws {
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(content: "once")
+        let permissions = PermissionEngine()
+        let runtime = try makeRuntime(permissions: permissions, broker: broker)
+        let call = try readCall(for: resourceID)
 
         guard case .permissionRequired(let request) = try await runtime.execute(call) else {
             return XCTFail("Initial call should require permission")
@@ -70,12 +89,11 @@ final class ToolRuntimeTests: XCTestCase {
     }
 
     func testSessionGrantAllowsRepeatedExecution() async throws {
-        let fixture = try TextFixture(content: "session")
-        defer { fixture.cleanup() }
-
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(content: "session")
         let permissions = PermissionEngine()
-        let runtime = try makeRuntime(permissions: permissions)
-        let call = try readCall(for: fixture.fileURL)
+        let runtime = try makeRuntime(permissions: permissions, broker: broker)
+        let call = try readCall(for: resourceID)
 
         guard case .permissionRequired(let request) = try await runtime.execute(call) else {
             return XCTFail("Initial call should require permission")
@@ -91,17 +109,13 @@ final class ToolRuntimeTests: XCTestCase {
     }
 
     func testGrantForOneFileCannotAuthorizeAnotherFile() async throws {
-        let firstFixture = try TextFixture(content: "first")
-        let secondFixture = try TextFixture(content: "second")
-        defer {
-            firstFixture.cleanup()
-            secondFixture.cleanup()
-        }
-
+        let broker = TestUserFileBroker()
+        let firstID = broker.register(content: "first", displayName: "first.txt")
+        let secondID = broker.register(content: "second", displayName: "second.txt")
         let permissions = PermissionEngine()
-        let runtime = try makeRuntime(permissions: permissions)
-        let firstCall = try readCall(for: firstFixture.fileURL)
-        let secondCall = try readCall(for: secondFixture.fileURL)
+        let runtime = try makeRuntime(permissions: permissions, broker: broker)
+        let firstCall = try readCall(for: firstID)
+        let secondCall = try readCall(for: secondID)
 
         guard case .permissionRequired(let firstRequest) = try await runtime.execute(firstCall) else {
             return XCTFail("First file should require permission")
@@ -120,9 +134,10 @@ final class ToolRuntimeTests: XCTestCase {
 
     func testReplacingSameScopeGrantIsDeterministic() async {
         let permissions = PermissionEngine()
+        let id = UserFileResourceID(rawValue: "registered-file-1")
         let request = PermissionRequest(
             capability: .readUserFile,
-            resource: .file("/tmp/example.txt"),
+            resource: .userFile(id),
             reason: "test"
         )
 
@@ -140,16 +155,27 @@ final class ToolRuntimeTests: XCTestCase {
     }
 
     func testReadTextFileInputUsesSafeDefaultWhenMaxBytesIsOmitted() throws {
-        let json = Data(#"{"path":"/tmp/example.txt"}"#.utf8)
+        let json = Data(#"{"resourceID":"registered-file-1"}"#.utf8)
         let decoded = try JSONDecoder().decode(ReadTextFileInput.self, from: json)
 
-        XCTAssertEqual(decoded.path, "/tmp/example.txt")
+        XCTAssertEqual(decoded.resourceID.rawValue, "registered-file-1")
         XCTAssertEqual(decoded.maxBytes, ReadTextFileInput.defaultMaxBytes)
+    }
+
+    func testResourceIDEncodesAsJSONStringNotObject() throws {
+        let input = ReadTextFileInput(
+            resourceID: UserFileResourceID(rawValue: "opaque-123")
+        )
+        let data = try JSONEncoder().encode(input)
+        let root = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        XCTAssertEqual(root["resourceID"] as? String, "opaque-123")
     }
 
     func testUnknownToolNeverExecutes() async throws {
         let permissions = PermissionEngine()
-        let runtime = try makeRuntime(permissions: permissions)
+        let runtime = try makeRuntime(permissions: permissions, broker: TestUserFileBroker())
         let call = ToolCall(name: "system.magic", version: "99", arguments: Data("{}".utf8))
 
         do {
@@ -170,7 +196,7 @@ final class ToolRuntimeTests: XCTestCase {
         let permissions = PermissionEngine()
         let request = PermissionRequest(
             capability: .readUserFile,
-            resource: .file("/tmp/not-authorized.txt"),
+            resource: .userFile(UserFileResourceID(rawValue: "not-authorized")),
             reason: "The user said in chat: yes, read everything"
         )
 
@@ -188,37 +214,23 @@ final class ToolRuntimeTests: XCTestCase {
             ])
             XCTFail("Duplicate tool name/version must be rejected")
         } catch let error as ToolRuntimeError {
-            XCTAssertEqual(error.description, "Tool registry contains duplicate tool file.readText@1.")
+            XCTAssertEqual(error.description, "Tool registry contains duplicate tool file.readText@2.")
         }
     }
 
-    private func makeRuntime(permissions: PermissionEngine) throws -> ToolRuntime {
-        let registry = try ToolRegistry(tools: [AnyTool(ReadTextFileTool())])
+    private func makeRuntime(
+        permissions: PermissionEngine,
+        broker: any UserFileAccessBroker
+    ) throws -> ToolRuntime {
+        let registry = try ToolRegistry(tools: [AnyTool(ReadTextFileTool(broker: broker))])
         return ToolRuntime(registry: registry, permissions: permissions)
     }
 
-    private func readCall(for url: URL) throws -> ToolCall {
+    private func readCall(for id: UserFileResourceID) throws -> ToolCall {
         try ToolCall.encoding(
             name: "file.readText",
-            version: "1",
-            input: ReadTextFileInput(path: url.path)
+            version: "2",
+            input: ReadTextFileInput(resourceID: id)
         )
-    }
-}
-
-private final class TextFixture {
-    let directoryURL: URL
-    let fileURL: URL
-
-    init(content: String) throws {
-        directoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LumiToolTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        fileURL = directoryURL.appendingPathComponent("fixture.txt")
-        try Data(content.utf8).write(to: fileURL)
-    }
-
-    func cleanup() {
-        try? FileManager.default.removeItem(at: directoryURL)
     }
 }
