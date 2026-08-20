@@ -218,9 +218,16 @@ public actor LumiEngine {
 
         _ = await appendMessage(role: .user, content: cleanInput)
 
-        // Retrieval returns more candidates than the final prompt needs. ContextBudgetManager
-        // decides how many actually fit alongside system instructions and conversation history.
-        let contextCandidates = await knowledge.search(cleanInput, limit: 8)
+        // Direct chat should not pay the retrieval/embedding cost on every turn. Until the
+        // capability router arrives, knowledge intent or an explicit knowledge profile is the
+        // boundary that enables retrieval.
+        let contextCandidates: [KnowledgeHit]
+        if intent == .knowledge || profile.name == "knowledge" {
+            contextCandidates = await knowledge.search(cleanInput, limit: 8)
+        } else {
+            contextCandidates = []
+        }
+
         let fullHistory = await memory.all()
         let packed = contextManager.pack(
             profile: profile,
