@@ -20,7 +20,8 @@ cd "$ROOT"
 "$PYTHON" -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e "services/core[dev]"
+python -m pip install -c services/core/requirements.lock -e "services/core[dev]"
+python -m pip check
 LUMI_RAG_DENSE=false lumi-core doctor --initialize --no-model --require-database
 
 if [[ "$(uname -s)" == "Darwin" && "$BUILD_APP" -eq 1 ]]; then

@@ -19,8 +19,14 @@ jobs:
           python-version: "3.12"
       - name: Build wheel and source archive
         run: |
-          python -m pip install build
+          python -m pip install -c services/core/requirements.lock build
           python -m build services/core
+      - name: Verify wheel in clean environment
+        run: |
+          python -m venv "${RUNNER_TEMP}/verify-wheel"
+          "${RUNNER_TEMP}/verify-wheel/bin/python" -m pip install -c services/core/requirements.lock services/core/dist/lumi_core-*.whl
+          "${RUNNER_TEMP}/verify-wheel/bin/python" -m pip check
+          "${RUNNER_TEMP}/verify-wheel/bin/lumi-core" version
       - name: Upload Core distribution
         uses: actions/upload-artifact@v4
         with:

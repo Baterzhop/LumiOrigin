@@ -1,0 +1,29 @@
+# Lumi Core RC1 tested dependency set.
+# Generated from the green Ubuntu Python 3.12.14 CI environment on 2026-08-21.
+# Install the project with this file as a constraints set; lumi-core itself is installed from the repository/wheel.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+build==1.5.0
+certifi==2026.7.22
+click==8.4.2
+fastapi==0.141.1
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.19
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+pygments==2.21.0
+pypdf==6.16.1
+pyproject-hooks==1.2.0
+pytest==8.4.2
+pytest-asyncio==0.26.0
+python-multipart==0.0.32
+starlette==1.6.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+uvicorn==0.52.4
