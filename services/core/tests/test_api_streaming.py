@@ -22,7 +22,12 @@ class FastStreamingProvider:
 def test_http_sse_stream_emits_structured_lifecycle(monkeypatch, tmp_path):
     database = Database(tmp_path / "lumi.sqlite3")
     database.migrate()
-    monkeypatch.setattr(api_main, "runtime", AgentRuntime(database, ModelGateway(FastStreamingProvider())))
+    services = api_main.app.state.lumi
+    monkeypatch.setattr(
+        services,
+        "runtime",
+        AgentRuntime(database, ModelGateway(FastStreamingProvider())),
+    )
 
     client = TestClient(api_main.app)
     with client.stream("POST", "/v1/chat/stream", json={"message": "ping"}) as response:
