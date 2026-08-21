@@ -2,13 +2,20 @@ import SwiftUI
 
 struct LumiRootView: View {
     @ObservedObject var coreManager: CoreProcessManager
+    @AppStorage("Lumi.Setup.Completed") private var setupCompleted = false
     @State private var allowOfflineUI = false
 
     var body: some View {
         Group {
             switch coreManager.state {
             case .connected, .runningManaged:
-                ContentView()
+                if setupCompleted {
+                    ContentView()
+                } else {
+                    LumiSetupView(coreManager: coreManager) {
+                        setupCompleted = true
+                    }
+                }
             case .checking, .starting:
                 startupView
             case .runtimeMissing:

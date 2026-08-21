@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Validate shell entrypoints
-        run: bash -n scripts/install_lumi.sh scripts/start_lumi.sh scripts/build_macos_app.sh
+        run: bash -n scripts/install_lumi.sh scripts/start_lumi.sh scripts/build_macos_app.sh scripts/notarize_macos_app.sh
       - name: Install tested dependency set
         run: |
           python -m pip install -c services/core/requirements.lock -e "services/core[dev]"
@@ -73,7 +73,7 @@ jobs:
               time.sleep(0.25)
           raise SystemExit("Core did not become ready")
           PY
-          python scripts/acceptance_local.py --base-url http://127.0.0.1:8791
+          lumi-core acceptance --base-url http://127.0.0.1:8791
       - name: Primary-model + dense-embedding acceptance test
         if: matrix.os == 'ubuntu-latest'
         env:
@@ -111,7 +111,7 @@ jobs:
           raise SystemExit("Primary acceptance services did not become ready")
           PY
           lumi-core doctor --require-model --require-database
-          python scripts/acceptance_local.py --base-url http://127.0.0.1:8792 --require-model
+          lumi-core acceptance --base-url http://127.0.0.1:8792 --require-model
       - name: Build Python distribution
         if: matrix.os == 'ubuntu-latest'
         run: python -m build services/core
@@ -129,8 +129,18 @@ jobs:
           "${RUNNER_TEMP}/lumi-wheel-smoke/bin/python" -m pip check
           "${RUNNER_TEMP}/lumi-wheel-smoke/bin/lumi-core" version
           LUMI_DATA_DIR="${RUNNER_TEMP}/lumi-wheel-data" LUMI_RAG_DENSE=false "${RUNNER_TEMP}/lumi-wheel-smoke/bin/lumi-core" doctor --initialize --no-model --require-database
-      - name: Import smoke
-        run: python -c "from lumi_core.api.main import app; print(app.title, app.version)"
+          "${RUNNER_TEMP}/lumi-wheel-smoke/bin/lumi-core" acceptance --help >/dev/null
+      - name: API factory import smoke
+        env:
+          LUMI_DATA_DIR: ${{ runner.temp }}/lumi-api-factory-smoke
+          LUMI_RAG_DENSE: "false"
+        run: |
+          python - <<'PY'
+          import lumi_core.api.main as api_main
+          assert not hasattr(api_main, "app"), "API module import must not construct the application"
+          app = api_main.create_app()
+          print(app.title, app.version)
+          PY
 
   macos-client:
     runs-on: macos-14
@@ -150,10 +160,10 @@ jobs:
           test -d dist/Lumi.app
           plutil -lint dist/Lumi.app/Contents/Info.plist
           codesign --verify --deep --strict dist/Lumi.app
-          test -f dist/Lumi-macOS-4.0.0rc4.zip
+          test -f dist/Lumi-macOS-4.0.0rc5.zip
           cd dist
-          shasum -a 256 Lumi-macOS-4.0.0rc4.zip > Lumi-macOS-4.0.0rc4.zip.sha256
-          shasum -a 256 -c Lumi-macOS-4.0.0rc4.zip.sha256
+          shasum -a 256 Lumi-macOS-4.0.0rc5.zip > Lumi-macOS-4.0.0rc5.zip.sha256
+          shasum -a 256 -c Lumi-macOS-4.0.0rc5.zip.sha256
 
   macos-install-smoke:
     runs-on: macos-14
@@ -169,6 +179,7 @@ jobs:
           CORE="$HOME/Library/Application Support/Lumi/runtime/venv/bin/lumi-core"
           test -x "$CORE"
           LUMI_DATA_DIR="$HOME/Library/Application Support/Lumi/data" LUMI_RAG_DENSE=false "$CORE" doctor --no-model --require-database
+          "$CORE" acceptance --help >/dev/null
           test -d dist/Lumi.app
       - name: Acceptance test installed Core runtime
         env:
@@ -198,4 +209,4 @@ jobs:
               time.sleep(0.25)
           raise SystemExit("Installed Core did not become ready")
           PY
-          "$VENV/bin/python" scripts/acceptance_local.py --base-url http://127.0.0.1:8793
+          "$VENV/bin/lumi-core" acceptance --base-url http://127.0.0.1:8793

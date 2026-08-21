@@ -8,7 +8,7 @@ from lumi_core.tools.builtins import Workspace, build_default_registry
 from lumi_core.tools.policy import PolicyEngine
 
 
-def test_agent_api_requires_and_records_write_approval(tmp_path, monkeypatch):
+def test_agent_api_requires_and_records_write_approval(tmp_path):
     database = Database(tmp_path / "agent-api.sqlite3")
     database.migrate()
     workspace = Workspace(tmp_path / "workspace")
@@ -27,8 +27,9 @@ def test_agent_api_requires_and_records_write_approval(tmp_path, monkeypatch):
             ]
         ),
     )
-    monkeypatch.setattr(api_main, "task_runtime", runtime)
-    client = TestClient(api_main.app)
+    app = api_main.create_app()
+    app.state.lumi.task_runtime = runtime
+    client = TestClient(app)
 
     created = client.post("/v1/tasks", json={"goal": "create api.txt"})
     assert created.status_code == 200
@@ -45,7 +46,7 @@ def test_agent_api_requires_and_records_write_approval(tmp_path, monkeypatch):
 
 
 def test_tools_endpoint_marks_write_as_high_risk():
-    client = TestClient(api_main.app)
+    client = TestClient(api_main.create_app())
     response = client.get("/v1/tools")
     assert response.status_code == 200
     write = next(item for item in response.json()["tools"] if item["name"] == "workspace.write_text")

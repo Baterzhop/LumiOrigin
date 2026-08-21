@@ -1,10 +1,10 @@
 from fastapi.testclient import TestClient
 
-from lumi_core.api.main import app
+from lumi_core.api.main import create_app
 
 
 def test_memory_api_requires_explicit_approval_and_supports_crud():
-    client = TestClient(app)
+    client = TestClient(create_app())
     payload = {
         "content": "API memory approval probe lunar-4821",
         "kind": "note",

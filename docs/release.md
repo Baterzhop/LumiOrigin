@@ -1,6 +1,6 @@
-# Lumi V4 RC4 Release Candidate
+# Lumi V4 RC5 Release Candidate
 
-This document defines the local release process for the V4 RC4 line.
+This document defines the local release process for the V4 RC5 line.
 
 ## Supported target
 
@@ -17,7 +17,7 @@ From the repository root:
 bash scripts/install_lumi.sh
 ```
 
-On macOS this creates a stable, non-editable Core environment at:
+On macOS this creates a stable Core environment at:
 
 ```text
 ~/Library/Application Support/Lumi/runtime/venv
@@ -27,7 +27,7 @@ initializes state under `~/Library/Application Support/Lumi/data`, runs the Core
 
 Use `--no-user-app` to keep only `dist/Lumi.app`, or `--core-only` to skip the app build.
 
-## Normal macOS startup
+## Normal macOS startup and first-run setup
 
 After installation:
 
@@ -40,46 +40,39 @@ The native app owns the normal local Core lifecycle:
 1. read secure connection configuration;
 2. check whether Core is already healthy;
 3. if the configured URL is auto-manageable loopback HTTP and Core is offline, locate the installed `lumi-core` executable;
-4. load the saved non-secret local model settings unless explicit environment overrides exist;
+4. load saved non-secret local model settings unless explicit environment overrides exist;
 5. start Core on the configured loopback port;
-6. wait for health before constructing the normal chat UI;
-7. terminate only the Core child process started by this app when Lumi exits.
+6. wait for health;
+7. on first successful launch, show **Finish Lumi setup** so the user can discover/select the real Ollama chat model and embedding configuration;
+8. terminate only the Core child process started by this app when Lumi exits.
 
 The app-managed process writes stdout/stderr to `~/Library/Logs/Lumi/core.log` and uses `~/Library/Application Support/Lumi/data` unless `LUMI_DATA_DIR` is explicitly supplied.
 
 `scripts/start_lumi.sh` is a convenience launcher on macOS. A terminal is not required to stay open for ordinary use.
 
-## Native connection settings
+## Native connection and model settings
 
 The Settings window stores the Core URL in UserDefaults and the optional API key in macOS Keychain. Environment variables continue to take precedence for development/automation.
 
 Security rules:
 
 - HTTP URLs are accepted only for loopback hosts;
-- remote Core configuration must use HTTPS;
-- usernames/passwords/API credentials embedded in the URL are rejected;
-- query strings and fragments are rejected from the base URL;
+- remote Core/model-server configuration must use HTTPS;
+- usernames/passwords/API credentials embedded in URLs are rejected;
+- query strings and fragments are rejected from base URLs;
 - saved API keys must contain at least 24 characters;
 - deleting the saved key removes the generic-password Keychain item.
 
-Restart the app after changing Core connection settings so all view models use the new client configuration.
-
-## Native local-model settings
-
-RC4 exposes the app-managed Ollama configuration directly in **Lumi → Settings**:
+The app-managed Ollama configuration includes:
 
 - Ollama server URL;
 - chat model name;
 - embedding model name;
 - dense-retrieval enable/disable toggle.
 
-The Ollama server URL follows the same boundary as the Core URL: loopback HTTP is allowed, remote servers require HTTPS, and embedded credentials/query strings/fragments are rejected.
+**Discover installed models** calls Ollama `GET /api/tags` using typed HTTP transport. It does not execute a shell command. **Save models & restart managed Core** persists the non-secret configuration and restarts only a Core child process owned by Lumi. External/remote Core processes are never terminated by this action.
 
-**Discover installed models** calls the official Ollama `GET /api/tags` endpoint using typed HTTP transport. It does not execute a shell command. The returned installed model names can be selected for chat or embeddings; a custom valid model name can still be entered manually.
-
-**Save models & restart managed Core** persists the non-secret model configuration in UserDefaults and restarts only a Core child process owned by Lumi. If Core is externally managed or remote, Lumi does not terminate it and the remote/external Core retains its own model configuration.
-
-When Lumi launches a managed local Core, saved settings map to:
+Saved values map to:
 
 ```text
 LUMI_OLLAMA_URL=<server>/api/chat
@@ -89,13 +82,13 @@ LUMI_EMBEDDING_MODEL=<embedding model>
 LUMI_RAG_DENSE=true|false
 ```
 
-Explicit process environment variables with these names are preserved and override saved UI values. This keeps CI and developer automation deterministic.
+Explicit process environment values remain higher-priority overrides.
 
-## Native diagnostics
+## Native diagnostics and Readiness Center
 
-Use **Core → Open Diagnostics…** (`⇧⌘I`). The report is intentionally metadata-only and may be copied for support. It includes app/Core versions, Core manager state, Core URL, configured model server/model names, whether a Keychain item exists, runtime/data/log paths, active provider/model names, tool count and memory-retrieval mode.
+Use **Core → Open Diagnostics…** (`⇧⌘I`) for metadata-only troubleshooting. It excludes API-key values, prompts/chat text, durable-memory contents, knowledge-document contents and repository contents.
 
-It does not include API-key values, prompt text, chat messages, durable-memory contents, knowledge-document contents or repository contents.
+Use **Core → Open Readiness Center…** (`⇧⌘R`) for target-machine acceptance. The Readiness Center runs the packaged installed-runtime acceptance command. In real-model mode the check fails if either ordinary chat or streaming falls back.
 
 ## Core operations CLI
 
@@ -108,10 +101,26 @@ CORE="$HOME/Library/Application Support/Lumi/runtime/venv/bin/lumi-core"
 "$CORE" migrate
 "$CORE" backup
 "$CORE" restore <backup.sqlite3> --yes
+"$CORE" acceptance
+"$CORE" acceptance --require-model
 "$CORE" serve
 ```
 
 `doctor` checks validated configuration, SQLite integrity and local-model availability. Model availability is informational unless `--require-model` is supplied.
+
+`acceptance` is a packaged, installed-runtime contract. It validates:
+
+- liveness and readiness;
+- runtime metadata;
+- ordinary chat;
+- SSE streaming;
+- `fallback:false` when `--require-model` is requested;
+- durable-memory create/search/delete round trip;
+- grounded knowledge upload/query;
+- non-empty tool registry;
+- verified database backup creation.
+
+The probe is repeatable: it reuses a dedicated acceptance conversation and deterministic knowledge document instead of creating unbounded rows, and deletes its temporary durable-memory record after each run.
 
 ## Backup and recovery
 
@@ -129,23 +138,21 @@ Restore is deliberately explicit and requires Core to be stopped:
 
 Before replacing an existing database, restore creates a `pre-restore-*` safety backup. The source backup is verified before use, the restored temporary database is verified before replacement, and the final database is verified again after replacement.
 
-Do not run restore while Lumi Core is active. The restore path attempts an exclusive SQLite lock and fails closed when the database is in use.
+## Physical target-Mac acceptance
 
-## Local acceptance test
-
-After installing, configure/select an actually installed Ollama chat model in the Settings window, apply it to the managed Core, then run the physical target-Mac gate:
+After installation and selecting an actually installed Ollama chat model, run either the native Readiness Center in **Require real model** mode or:
 
 ```bash
-"$HOME/Library/Application Support/Lumi/runtime/venv/bin/python" scripts/acceptance_local.py --require-model
+"$HOME/Library/Application Support/Lumi/runtime/venv/bin/lumi-core" acceptance --require-model
 ```
 
-The acceptance script exercises liveness/readiness, runtime metadata, ordinary chat, SSE streaming, durable-memory create/search/delete, document upload/retrieval and tool-registry discovery. `--require-model` additionally requires the configured local model to answer without fallback.
+The result must return `"ok": true` and `"fallback": false`. This command is part of the installed wheel/runtime, so it does not depend on keeping a repository checkout or invoking a repository-only Python file.
 
-The external GA checklist is tracked in GitHub issue #44. Repository CI cannot substitute for this physical-machine gate.
+The external GA checklist is tracked in GitHub issue #44. Repository CI cannot substitute for the actual target-machine Ollama/macOS session.
 
 ## macOS package
 
-Build locally:
+Build the local/ad-hoc package:
 
 ```bash
 bash scripts/build_macos_app.sh
@@ -155,16 +162,32 @@ Outputs:
 
 ```text
 dist/Lumi.app
-dist/Lumi-macOS-4.0.0rc4.zip
+dist/Lumi-macOS-4.0.0rc5.zip
 ```
 
-The local build is ad-hoc signed by default. A different signing identity can be selected with:
+## Developer-ID signing and notarization
+
+The repository is credential-ready for public distribution:
 
 ```bash
+xcrun notarytool store-credentials "lumi-notary" ...
 export LUMI_CODESIGN_IDENTITY="Developer ID Application: ..."
+export LUMI_NOTARY_PROFILE="lumi-notary"
+bash scripts/notarize_macos_app.sh
 ```
 
-Developer-ID signing and Apple notarization are distribution concerns and are not claimed by the repository until valid Apple credentials are configured.
+The notarization script:
+
+1. refuses ad-hoc/no signing identities;
+2. builds with the selected Developer ID Application identity;
+3. verifies codesign;
+4. submits the ZIP with `xcrun notarytool ... --wait` using a Keychain profile;
+5. staples and validates the ticket on `Lumi.app`;
+6. runs Gatekeeper `spctl --assess`;
+7. recreates the distribution ZIP after stapling;
+8. creates and verifies the final SHA-256 file.
+
+Real Apple credentials are external secrets, so repository CI validates the entrypoint but does not claim notarization has passed until it has actually run with valid credentials.
 
 ## GitHub release artifacts and checksums
 
@@ -173,34 +196,33 @@ Developer-ID signing and Apple notarization are distribution concerns and are no
 - Python wheel + source distribution + `SHA256SUMS`;
 - macOS app ZIP + matching `.sha256` file.
 
-The workflow runs manually or for tags matching `v4.*`.
-
 Example verification:
 
 ```bash
-shasum -a 256 -c Lumi-macOS-4.0.0rc4.zip.sha256
+shasum -a 256 -c Lumi-macOS-4.0.0rc5.zip.sha256
 sha256sum -c SHA256SUMS
 ```
 
-Checksums provide artifact-integrity verification. They are not an identity/notarization mechanism.
-
 ## Release gate
 
-A release-candidate commit is acceptable only if all of the following are green:
+A release-candidate commit is repository-ready only if all automatable gates are green on that exact head:
 
 1. Python install and `pip check`.
 2. `lumi-core doctor` initialization.
-3. Full Python unit/API/security/RAG/memory/tool/Developer-Agent tests on Ubuntu and macOS.
+3. Full Python unit/API/security/RAG/memory/tool/Developer-Agent/acceptance tests on Ubuntu and macOS.
 4. Deterministic multilingual RAG regression gate.
 5. Deterministic multilingual memory regression gate.
-6. Real fallback HTTP + SSE acceptance against a live Core process.
-7. Real primary-model + dense-embedding acceptance against the deterministic Ollama-compatible CI server.
-8. Python wheel/sdist build and clean-environment wheel smoke.
-9. Swift debug build and tests, including secure Core/model-server URL validation, persisted model settings, environment-override mapping and injected Ollama tags transport.
-10. macOS release app bundle build, plist validation and code-sign verification.
-11. Production-style macOS installation into the stable Application Support runtime.
-12. Live fallback acceptance against that installed runtime.
-13. Release-artifact checksum generation and verification.
-14. Physical target-Mac acceptance with `scripts/acceptance_local.py --require-model` against the actual selected Ollama model.
+6. Live fallback HTTP/SSE acceptance through the packaged `lumi-core acceptance` command.
+7. Live primary-model + dense-embedding acceptance with `--require-model` against the deterministic Ollama-compatible CI server.
+8. Python wheel/sdist build and clean-environment wheel smoke, including presence of the packaged acceptance command.
+9. Swift debug build/tests, including secure Core/model-server configuration, model discovery and acceptance-command configuration.
+10. macOS release bundle build, plist validation, code-sign and SHA-256 verification.
+11. production-style macOS installation into the stable Application Support runtime.
+12. live fallback acceptance invoked by the **installed** `lumi-core` executable.
+13. release-artifact checksum generation and verification.
+14. shell validation of the credential-ready notarization path.
 
-Items 1–13 are automatable. Item 14 is deliberately machine-specific because GitHub does not have the actual installed Ollama models or target-machine session.
+External gates that cannot be truthfully completed by GitHub-hosted CI:
+
+15. physical target-Mac acceptance with `lumi-core acceptance --require-model` against the actual selected Ollama model;
+16. public distribution: real Developer-ID signing, Apple notarization/stapling and Gatekeeper verification on a clean target.

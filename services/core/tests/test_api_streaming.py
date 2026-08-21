@@ -1,7 +1,10 @@
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 
 from lumi_core.agent.runtime import AgentRuntime
-from lumi_core.api import main as api_main
+from lumi_core.api.main import create_app
+from lumi_core.config import Settings
 from lumi_core.models.gateway import ModelGateway, ModelMessage, ModelResult, ModelStreamEvent
 from lumi_core.storage.database import Database
 
@@ -20,11 +23,27 @@ class FastStreamingProvider:
 
 
 def test_http_sse_stream_emits_structured_lifecycle(monkeypatch, tmp_path):
-    database = Database(tmp_path / "lumi.sqlite3")
+    root = tmp_path / "sse-app"
+    settings = replace(
+        Settings.from_env(),
+        database_path=root / "lumi.sqlite3",
+        backup_dir=root / "backups",
+        tool_workspace_root=root / "workspace",
+        rag_dense_enabled=False,
+        developer_repo_root=None,
+        developer_github_repository=None,
+        developer_github_token=None,
+    )
+    app = create_app(settings)
+    database = Database(tmp_path / "stream-runtime.sqlite3")
     database.migrate()
-    monkeypatch.setattr(api_main, "runtime", AgentRuntime(database, ModelGateway(FastStreamingProvider())))
+    monkeypatch.setattr(
+        app.state.lumi,
+        "runtime",
+        AgentRuntime(database, ModelGateway(FastStreamingProvider())),
+    )
 
-    client = TestClient(api_main.app)
+    client = TestClient(app)
     with client.stream("POST", "/v1/chat/stream", json={"message": "ping"}) as response:
         body = "".join(response.iter_text())
 
