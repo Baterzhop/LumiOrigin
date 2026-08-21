@@ -30,7 +30,7 @@ final class AcceptanceConfigurationTests: XCTestCase {
               "chat_model": "qwen3",
               "fallback": false,
               "stream_events": ["started", "delta", "completed"],
-              "repeatable_probe": true,
+              "temporary_state_cleaned": true,
               "checks": {"health": true}
             }
             """.utf8
@@ -42,6 +42,6 @@ final class AcceptanceConfigurationTests: XCTestCase {
         XCTAssertEqual(report.chatProvider, "ollama")
         XCTAssertEqual(report.chatModel, "qwen3")
         XCTAssertEqual(report.streamEvents.last, "completed")
-        XCTAssertTrue(report.repeatableProbe)
+        XCTAssertTrue(report.temporaryStateCleaned)
     }
 }
