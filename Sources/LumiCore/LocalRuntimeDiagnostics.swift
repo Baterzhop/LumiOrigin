@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public struct LocalModelConfiguration: Hashable, Sendable {
+public struct LocalModelConfiguration: Sendable {
     public let chatEndpoint: URL
     public let embeddingEndpoint: URL
     public let tagsEndpoint: URL
@@ -312,9 +312,9 @@ public struct LocalRuntimeDiagnosticService: Sendable {
             embeddingModel: configuration.embeddingModel,
             embeddingInstalled: embeddingInstalled,
             installedModels: installed,
-            chatEndpoint: configuration.chatEndpoint.absoluteString,
-            embeddingEndpoint: configuration.embeddingEndpoint.absoluteString,
-            tagsEndpoint: configuration.tagsEndpoint.absoluteString,
+            chatEndpoint: redactedEndpoint(configuration.chatEndpoint),
+            embeddingEndpoint: redactedEndpoint(configuration.embeddingEndpoint),
+            tagsEndpoint: redactedEndpoint(configuration.tagsEndpoint),
             contextWindow: configuration.contextWindow,
             databasePath: databasePath,
             workspacePath: workspacePath,
@@ -347,9 +347,9 @@ public struct LocalRuntimeDiagnosticService: Sendable {
             embeddingModel: configuration.embeddingModel,
             embeddingInstalled: false,
             installedModels: [],
-            chatEndpoint: configuration.chatEndpoint.absoluteString,
-            embeddingEndpoint: configuration.embeddingEndpoint.absoluteString,
-            tagsEndpoint: configuration.tagsEndpoint.absoluteString,
+            chatEndpoint: redactedEndpoint(configuration.chatEndpoint),
+            embeddingEndpoint: redactedEndpoint(configuration.embeddingEndpoint),
+            tagsEndpoint: redactedEndpoint(configuration.tagsEndpoint),
             contextWindow: configuration.contextWindow,
             databasePath: databasePath,
             workspacePath: workspacePath,
@@ -366,5 +366,16 @@ public struct LocalRuntimeDiagnosticService: Sendable {
             return true
         }
         return false
+    }
+
+    private static func redactedEndpoint(_ url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return "<configured endpoint>"
+        }
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.url?.absoluteString ?? "<configured endpoint>"
     }
 }
