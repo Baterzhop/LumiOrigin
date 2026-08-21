@@ -1,13 +1,17 @@
-# Lumi V4 RC1
+# Lumi V4 RC2
 
 Lumi is a local-first AI assistant platform for macOS. V4 is a ground-up redesign with a native SwiftUI client and a Python Core that owns orchestration, durable state, retrieval, memory, policy-gated tools and the Developer Agent.
 
 ## Current release-candidate architecture
 
 ```text
-SwiftUI macOS client
-        │  HTTP / SSE / approvals / uploads
-        ▼
+Lumi.app (SwiftUI)
+  ├─ secure Core URL + Keychain API-key configuration
+  ├─ local Core lifecycle manager
+  │    └─ starts/stops installed local lumi-core when needed
+  │
+  │ HTTP / SSE / approvals / uploads
+  ▼
 Lumi Core (FastAPI)
   ├─ streaming chat + cancellation
   ├─ token-budget context manager
@@ -22,7 +26,8 @@ Lumi Core (FastAPI)
 ## Safety model
 
 - local loopback access by default;
-- remote/LAN access requires an explicit strong API key;
+- remote/LAN client configuration rejects plain HTTP and requires HTTPS;
+- optional Core API keys are stored by the native client in macOS Keychain;
 - untrusted documents, tool output and repository content are never treated as system instructions;
 - write tools require approval;
 - Developer Agent uses a separate checkout, two explicit approval stages and draft PRs only;
@@ -37,31 +42,55 @@ Requirements: macOS 13+, Python 3.11+ and Swift 5.9+. Ollama is optional for fal
 git clone https://github.com/Baterzhop/LumiOrigin.git
 cd LumiOrigin
 bash scripts/install_lumi.sh
-bash scripts/start_lumi.sh
+open "$HOME/Applications/Lumi.app"
 ```
 
-`main` is now the V4 RC1 line. The installer creates `.venv`, resolves the tested dependency set through `services/core/requirements.lock`, installs the Core, initializes the verified SQLite state and builds an ad-hoc signed `dist/Lumi.app`.
+The installer creates a stable Core runtime at:
+
+```text
+~/Library/Application Support/Lumi/runtime/venv
+```
+
+and local state at:
+
+```text
+~/Library/Application Support/Lumi/data
+```
+
+It builds an ad-hoc signed macOS application and installs it to `~/Applications/Lumi.app` by default. Opening Lumi now checks for an existing Core and, for the default local configuration, starts the installed Core automatically. A terminal no longer has to remain open for normal macOS use.
+
+Core logs from the app-managed process are written to:
+
+```text
+~/Library/Logs/Lumi/core.log
+```
+
+## Native settings
+
+Use **Lumi → Settings** to configure the Core URL and an optional API key. Remote Core URLs must use HTTPS. API keys are stored in macOS Keychain rather than UserDefaults. Restart Lumi after changing connection settings.
 
 ## Operations
 
+The installed Core CLI is available at:
+
 ```bash
-source .venv/bin/activate
-lumi-core doctor
-lumi-core migrate
-lumi-core backup --full
-lumi-core restore /path/to/backup.sqlite3 --yes --full
-lumi-core serve
+CORE="$HOME/Library/Application Support/Lumi/runtime/venv/bin/lumi-core"
+"$CORE" doctor
+"$CORE" migrate
+"$CORE" backup --full
+"$CORE" restore /path/to/backup.sqlite3 --yes --full
+"$CORE" serve
 ```
 
-For a real local-model acceptance test:
+For a real local-model acceptance test from the repository:
 
 ```bash
-python scripts/acceptance_local.py --require-model
+"$HOME/Library/Application Support/Lumi/runtime/venv/bin/python" scripts/acceptance_local.py --require-model
 ```
 
 ## Knowledge
 
-Lumi currently ingests PDF, Markdown and text files. Retrieval combines SQLite FTS5/BM25 with optional Ollama embeddings through weighted reciprocal-rank fusion and can optionally use a CrossEncoder reranker. Responses carry document/chunk/page citations. Scanned-PDF OCR remains outside RC1.
+Lumi currently ingests PDF, Markdown and text files. Retrieval combines SQLite FTS5/BM25 with optional Ollama embeddings through weighted reciprocal-rank fusion and can optionally use a CrossEncoder reranker. Responses carry document/chunk/page citations. Scanned-PDF OCR remains outside RC2.
 
 ## Memory
 
@@ -84,19 +113,21 @@ Hardened configuration rejects weak API keys, wildcard CORS and unsafe network s
 The release gate covers:
 
 - Ubuntu/macOS Python install + dependency checks;
-- exact tested dependency constraints for Lumi's own release environment;
+- exact tested dependency constraints for Lumi's release environment;
 - full unit/API/security/RAG/memory/tools/Developer-Agent tests;
 - multilingual deterministic RAG/memory regressions;
 - fallback HTTP/SSE live acceptance;
 - primary-model + dense-embedding HTTP/SSE acceptance against an Ollama-compatible deterministic CI server;
 - Python wheel/sdist build plus clean-environment wheel install smoke;
-- Swift build/tests;
-- macOS `.app` packaging, plist validation and code-sign verification.
+- Swift build/tests, including secure native connection validation;
+- macOS `.app` packaging, plist validation and code-sign verification;
+- production-style macOS one-command installation into the stable runtime layout;
+- live acceptance against that installed Core runtime.
 
-The final target-machine gate is intentionally separate because GitHub cannot access the user's installed Ollama models:
+The final physical target-machine model gate remains separate because GitHub cannot access the user's installed Ollama models:
 
 ```bash
-python scripts/acceptance_local.py --require-model
+"$HOME/Library/Application Support/Lumi/runtime/venv/bin/python" scripts/acceptance_local.py --require-model
 ```
 
 See `docs/architecture.md`, `docs/hardening.md`, `docs/release.md`, `docs/reproducibility.md` and `RELEASE_CHECKLIST.md` for design, security and release contracts.
