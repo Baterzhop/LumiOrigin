@@ -46,7 +46,7 @@ public struct HybridIngestionReport: Sendable {
 
 /// Coordinates sparse and dense retrieval without making either backend responsible for fusion.
 /// Dense failures intentionally degrade to sparse retrieval rather than taking the knowledge system offline.
-public actor HybridKnowledgeLibrary: KnowledgeRetrieving {
+public actor HybridKnowledgeLibrary: KnowledgeLibraryManaging {
     private let sparse: any KnowledgeStore
     private let vectors: any VectorIndex
     private let embeddings: any EmbeddingProvider
@@ -140,6 +140,10 @@ public actor HybridKnowledgeLibrary: KnowledgeRetrieving {
                 denseIssue: error.localizedDescription
             )
         }
+    }
+
+    public func listSources(limit: Int = 100) async throws -> [KnowledgeSourceRecord] {
+        try await sparse.listSources(limit: limit)
     }
 
     public func removeSource(id: String) async throws {
