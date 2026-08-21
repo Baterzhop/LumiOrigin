@@ -55,7 +55,8 @@ final class KnowledgeImportTests: XCTestCase {
         try await store.removeSource(id: "manual-a")
         let remaining = try await store.listSources(limit: 10)
         XCTAssertEqual(remaining.map(\.id), ["manual-b"])
-        XCTAssertTrue(await store.search("drain plug torque", limit: 5).isEmpty)
+        let removedHits = await store.search("drain plug torque", limit: 5)
+        XCTAssertTrue(removedHits.isEmpty)
     }
 
     func testEngineManagedKnowledgeUsesSameHybridRetrieverAndRemovesDenseVectors() async throws {
@@ -81,7 +82,8 @@ final class KnowledgeImportTests: XCTestCase {
             )
         )
         XCTAssertTrue(report.denseIndexed)
-        XCTAssertEqual(try await engine.knowledgeSources(limit: 10).map(\.id), ["vehicle-source"])
+        let sourcesBeforeRemoval = try await engine.knowledgeSources(limit: 10)
+        XCTAssertEqual(sourcesBeforeRemoval.map(\.id), ["vehicle-source"])
 
         let hits = await engine.knowledge.search("vehicle", limit: 5)
         XCTAssertEqual(hits.first?.document.sourceID, "vehicle-source")
@@ -94,7 +96,8 @@ final class KnowledgeImportTests: XCTestCase {
         XCTAssertFalse(denseBefore.isEmpty)
 
         try await engine.removeKnowledgeSource(id: "vehicle-source")
-        XCTAssertTrue(try await engine.knowledgeSources(limit: 10).isEmpty)
+        let sourcesAfterRemoval = try await engine.knowledgeSources(limit: 10)
+        XCTAssertTrue(sourcesAfterRemoval.isEmpty)
         let denseAfter = try await vectors.search(
             vector: [1, 0, 0],
             modelID: "import-test",
