@@ -33,9 +33,11 @@ final class TaskStoreTests: XCTestCase {
         XCTAssertEqual(events[0].revision, 1)
 
         let reopened = try SQLiteTaskStore(url: url)
-        let loaded = try XCTUnwrap(await reopened.load(id: created.id))
+        let loadedValue = try await reopened.load(id: created.id)
+        let loaded = try XCTUnwrap(loadedValue)
         XCTAssertEqual(loaded, created)
-        XCTAssertEqual(try await reopened.events(taskID: created.id, limit: 20), events)
+        let reopenedEvents = try await reopened.events(taskID: created.id, limit: 20)
+        XCTAssertEqual(reopenedEvents, events)
     }
 
     func testLegalTransitionsIncrementRevisionAndAttemptsOnlyOnNewRun() async throws {
@@ -121,7 +123,8 @@ final class TaskStoreTests: XCTestCase {
         } catch let error as TaskStoreError {
             XCTAssertEqual(error, .invalidTransition(from: .draft, to: .succeeded))
         }
-        XCTAssertEqual(try await store.events(taskID: created.id, limit: 20).count, 1)
+        let afterIllegalTransition = try await store.events(taskID: created.id, limit: 20)
+        XCTAssertEqual(afterIllegalTransition.count, 1)
 
         let ready = try await store.transition(
             TaskTransitionRequest(
@@ -154,7 +157,8 @@ final class TaskStoreTests: XCTestCase {
                 )
             )
         }
-        XCTAssertEqual(try await store.events(taskID: created.id, limit: 20).count, 2)
+        let afterStaleEdit = try await store.events(taskID: created.id, limit: 20)
+        XCTAssertEqual(afterStaleEdit.count, 2)
     }
 
     func testRunningTaskCannotBeEditedAndCancelledTaskCannotRestart() async throws {
@@ -242,7 +246,8 @@ final class TaskStoreTests: XCTestCase {
                 return XCTFail("unexpected error: \(error)")
             }
         }
-        let unchanged = try XCTUnwrap(await store.load(id: ready.id))
+        let unchangedValue = try await store.load(id: ready.id)
+        let unchanged = try XCTUnwrap(unchangedValue)
         XCTAssertEqual(unchanged.state, .ready)
         XCTAssertEqual(unchanged.attemptCount, 0)
         XCTAssertEqual(unchanged.revision, ready.revision)
@@ -278,8 +283,12 @@ final class TaskStoreTests: XCTestCase {
         }
 
         let reopened = try SQLiteTaskStore(url: url)
-        XCTAssertEqual(try XCTUnwrap(await reopened.load(id: firstRunning.id)).state, .interrupted)
-        XCTAssertEqual(try XCTUnwrap(await reopened.load(id: secondWaiting.id)).state, .interrupted)
+        let firstReopenedValue = try await reopened.load(id: firstRunning.id)
+        let secondReopenedValue = try await reopened.load(id: secondWaiting.id)
+        let firstReopened = try XCTUnwrap(firstReopenedValue)
+        let secondReopened = try XCTUnwrap(secondReopenedValue)
+        XCTAssertEqual(firstReopened.state, .interrupted)
+        XCTAssertEqual(secondReopened.state, .interrupted)
     }
 
     func testEditPreservesIdentityAndOriginButAdvancesRevision() async throws {
