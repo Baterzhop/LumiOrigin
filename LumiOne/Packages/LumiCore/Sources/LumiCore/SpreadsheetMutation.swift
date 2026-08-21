@@ -351,7 +351,7 @@ public final class SpreadsheetMutationPlanStore: @unchecked Sendable {
     }
 
     public func consume(token: String) {
-        lock.withLock {
+        _ = lock.withLock {
             plans.removeValue(forKey: token)
         }
     }
