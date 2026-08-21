@@ -1,0 +1,47 @@
+name: Lumi V4 Release Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v4.*"
+
+permissions:
+  contents: read
+
+jobs:
+  core-wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel and source archive
+        run: |
+          python -m pip install build
+          python -m build services/core
+      - name: Upload Core distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumi-core-python
+          path: services/core/dist/*
+          if-no-files-found: error
+
+  macos-app:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and ad-hoc sign app bundle
+        run: bash scripts/build_macos_app.sh
+      - name: Verify package
+        run: |
+          plutil -lint dist/Lumi.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/Lumi.app
+          ls dist/Lumi-macOS-*.zip
+      - name: Upload macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumi-macos
+          path: dist/Lumi-macOS-*.zip
+          if-no-files-found: error
