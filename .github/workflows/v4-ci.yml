@@ -130,8 +130,17 @@ jobs:
           "${RUNNER_TEMP}/lumi-wheel-smoke/bin/lumi-core" version
           LUMI_DATA_DIR="${RUNNER_TEMP}/lumi-wheel-data" LUMI_RAG_DENSE=false "${RUNNER_TEMP}/lumi-wheel-smoke/bin/lumi-core" doctor --initialize --no-model --require-database
           "${RUNNER_TEMP}/lumi-wheel-smoke/bin/lumi-core" acceptance --help >/dev/null
-      - name: Import smoke
-        run: python -c "from lumi_core.api.main import app; print(app.title, app.version)"
+      - name: API factory import smoke
+        env:
+          LUMI_DATA_DIR: ${{ runner.temp }}/lumi-api-factory-smoke
+          LUMI_RAG_DENSE: "false"
+        run: |
+          python - <<'PY'
+          import lumi_core.api.main as api_main
+          assert not hasattr(api_main, "app"), "API module import must not construct the application"
+          app = api_main.create_app()
+          print(app.title, app.version)
+          PY
 
   macos-client:
     runs-on: macos-14
