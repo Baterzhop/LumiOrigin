@@ -161,29 +161,31 @@ public struct ModelRouter: LLMClient, Sendable {
 
     /// Local-first production policy. The default chat route has its normal deterministic fallback.
     /// Optional specialized Ollama models fall back to that chat route when unavailable.
-    public static func localOllamaDefault() -> ModelRouter {
-        let environment = ProcessInfo.processInfo.environment
-        let baseModel = environment["LUMI_OLLAMA_MODEL"] ?? "llama3.2"
-        let chatModel = environment["LUMI_OLLAMA_CHAT_MODEL"] ?? baseModel
-        let knowledgeModel = environment["LUMI_OLLAMA_KNOWLEDGE_MODEL"] ?? chatModel
-        let codingModel = environment["LUMI_OLLAMA_CODING_MODEL"] ?? chatModel
-        let reflectionModel = environment["LUMI_OLLAMA_REFLECTION_MODEL"] ?? chatModel
-        let agentModel = environment["LUMI_OLLAMA_AGENT_MODEL"] ?? chatModel
-
+    public static func localOllamaDefault(
+        configuration: LocalModelConfiguration = .environment()
+    ) -> ModelRouter {
+        let chatModel = configuration.model(for: .chat)
         let chat: any LLMClient = ResilientLLMClient(
-            primary: OllamaClient(model: chatModel)
+            primary: OllamaClient(
+                endpoint: configuration.chatEndpoint,
+                model: chatModel
+            )
         )
         var routes: [ModelRole: any LLMClient] = [:]
 
-        func addSpecializedRoute(_ role: ModelRole, model: String) {
+        func addSpecializedRoute(_ role: ModelRole) {
+            let model = configuration.model(for: role)
             guard model != chatModel else { return }
-            routes[role] = OllamaClient(model: model)
+            routes[role] = OllamaClient(
+                endpoint: configuration.chatEndpoint,
+                model: model
+            )
         }
 
-        addSpecializedRoute(.knowledge, model: knowledgeModel)
-        addSpecializedRoute(.coding, model: codingModel)
-        addSpecializedRoute(.reflection, model: reflectionModel)
-        addSpecializedRoute(.agentPlanner, model: agentModel)
+        addSpecializedRoute(.knowledge)
+        addSpecializedRoute(.coding)
+        addSpecializedRoute(.reflection)
+        addSpecializedRoute(.agentPlanner)
 
         return ModelRouter(
             defaultClient: chat,
