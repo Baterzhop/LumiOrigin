@@ -159,6 +159,12 @@ public struct TextChunker: Sendable {
     public let maxCharacters: Int
     public let overlapCharacters: Int
 
+    private struct Section {
+        let title: String?
+        let page: Int?
+        let text: String
+    }
+
     public init(maxCharacters: Int = 1_200, overlapCharacters: Int = 160) {
         self.maxCharacters = max(200, maxCharacters)
         self.overlapCharacters = min(max(0, overlapCharacters), max(0, self.maxCharacters / 3))
@@ -184,6 +190,7 @@ public struct TextChunker: Sendable {
                         tags: document.tags,
                         sourceURI: document.sourceURI,
                         section: section.title,
+                        page: section.page,
                         contentHash: contentHash
                     )
                 )
@@ -200,17 +207,29 @@ public struct TextChunker: Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func splitIntoSections(_ text: String, sourceType: KnowledgeSourceType) -> [(title: String?, text: String)] {
-        guard sourceType == .markdown else { return [(nil, text)] }
+    private func splitIntoSections(_ text: String, sourceType: KnowledgeSourceType) -> [Section] {
+        if sourceType == .pdf {
+            let pages = text.components(separatedBy: "\u{000C}")
+            let sections = pages.enumerated().compactMap { index, pageText -> Section? in
+                let clean = pageText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !clean.isEmpty else { return nil }
+                return Section(title: nil, page: index + 1, text: clean)
+            }
+            return sections.isEmpty ? [Section(title: nil, page: nil, text: text)] : sections
+        }
 
-        var result: [(String?, String)] = []
+        guard sourceType == .markdown else {
+            return [Section(title: nil, page: nil, text: text)]
+        }
+
+        var result: [Section] = []
         var currentTitle: String?
         var currentLines: [String] = []
 
         func flush() {
             let body = currentLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             if !body.isEmpty {
-                result.append((currentTitle, body))
+                result.append(Section(title: currentTitle, page: nil, text: body))
             }
         }
 
@@ -229,7 +248,7 @@ public struct TextChunker: Sendable {
         }
         flush()
 
-        return result.isEmpty ? [(nil, text)] : result
+        return result.isEmpty ? [Section(title: nil, page: nil, text: text)] : result
     }
 
     private func chunkSection(_ text: String) -> [String] {
