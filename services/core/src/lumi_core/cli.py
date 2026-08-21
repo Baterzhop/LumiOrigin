@@ -11,6 +11,7 @@ import httpx
 import uvicorn
 
 from lumi_core import __version__
+from lumi_core.acceptance import run_acceptance
 from lumi_core.config import Settings
 from lumi_core.storage.database import Database
 from lumi_core.storage.maintenance import DatabaseMaintenance
@@ -189,6 +190,22 @@ def command_restore(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_acceptance(args: argparse.Namespace) -> int:
+    key = os.getenv("LUMI_API_KEY", "").strip() or None
+    try:
+        result = run_acceptance(
+            args.base_url,
+            require_model=args.require_model,
+            api_key=key,
+            timeout_seconds=args.timeout,
+        )
+    except Exception as exc:
+        _json_print({"ok": False, "stage": "acceptance", "error": str(exc)})
+        return 1
+    _json_print(result)
+    return 0
+
+
 def command_serve(args: argparse.Namespace) -> int:
     settings = _settings_or_exit()
     host = args.host
@@ -248,6 +265,15 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--full", action="store_true", help="Use full integrity checks")
     restore.set_defaults(func=command_restore)
 
+    acceptance = sub.add_parser(
+        "acceptance",
+        help="Run the full live HTTP/SSE/RAG/memory/tools/backup acceptance contract against a running Core",
+    )
+    acceptance.add_argument("--base-url", default=os.getenv("LUMI_CORE_URL", "http://127.0.0.1:8790"))
+    acceptance.add_argument("--require-model", action="store_true", help="Fail if chat or streaming uses fallback")
+    acceptance.add_argument("--timeout", type=float, default=30.0, help="Per-request timeout in seconds")
+    acceptance.set_defaults(func=command_acceptance)
+
     serve = sub.add_parser("serve", help="Run Lumi Core")
     serve.add_argument("--host", default=os.getenv("LUMI_HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=int(os.getenv("LUMI_PORT", "8790")))
@@ -262,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if getattr(args, "require_model", False) and getattr(args, "no_model", False):
         parser.error("--require-model and --no-model cannot be used together")
+    if getattr(args, "timeout", 30.0) <= 0:
+        parser.error("--timeout must be greater than zero")
     return int(args.func(args))
 
 
