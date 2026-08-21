@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable
 
 import httpx
 
@@ -35,9 +34,10 @@ def run_acceptance(
 ) -> dict:
     """Run the installed-runtime acceptance contract against a live Lumi Core.
 
-    The probe creates isolated memory/document/chat state, verifies the main product
-    surfaces, then removes the temporary memory and knowledge document. A verified
-    database backup is intentionally retained as an operational recovery check.
+    The probe deliberately reuses one dedicated conversation and one deterministic
+    knowledge document so repeated checks do not create unbounded database state.
+    The temporary durable-memory record is removed after every run. A verified
+    database backup is intentionally retained as the recovery-path probe.
     """
 
     base = base_url.rstrip("/")
@@ -45,12 +45,11 @@ def run_acceptance(
         raise AcceptanceError("base_url_required")
     headers = {"X-Lumi-Key": api_key} if api_key else {}
     checks: dict[str, object] = {}
-    cleanup_errors: list[str] = []
     memory_id: str | None = None
-    document_id: str | None = None
-    conversation_ids: set[str] = set()
     chat: dict = {}
     event_types: list[str] = []
+    conversation_id = "lumi-acceptance"
+    doc_marker = "lumi-acceptance-grounded-retrieval-probe-v1"
 
     with httpx.Client(
         base_url=base,
@@ -74,11 +73,16 @@ def run_acceptance(
                 raise AcceptanceError("runtime_not_ok")
             checks["runtime"] = True
 
-            chat = _require(client.post("/v1/chat", json={"message": "Lumi acceptance probe"}))
+            chat = _require(
+                client.post(
+                    "/v1/chat",
+                    json={"message": "Lumi acceptance probe", "conversation_id": conversation_id},
+                )
+            )
             if not chat.get("content"):
                 raise AcceptanceError("chat_empty")
-            if chat.get("conversation_id"):
-                conversation_ids.add(str(chat["conversation_id"]))
+            if chat.get("conversation_id") != conversation_id:
+                raise AcceptanceError("chat_conversation_contract_failed")
             if require_model and chat.get("fallback"):
                 raise AcceptanceError(f"real_model_required_but_fallback_used:{chat.get('error')}")
             checks["chat"] = {
@@ -88,11 +92,10 @@ def run_acceptance(
                 "fallback": bool(chat.get("fallback")),
             }
 
-            stream_conversation: str | None = None
             with client.stream(
                 "POST",
                 "/v1/chat/stream",
-                json={"message": "Stream acceptance probe"},
+                json={"message": "Stream acceptance probe", "conversation_id": conversation_id},
             ) as response:
                 if response.status_code != 200:
                     raise AcceptanceError(
@@ -107,14 +110,12 @@ def run_acceptance(
                         continue
                     event_type = str(event.get("type"))
                     event_types.append(event_type)
-                    if event.get("conversation_id"):
-                        stream_conversation = str(event["conversation_id"])
+                    if event.get("conversation_id") != conversation_id:
+                        raise AcceptanceError("stream_conversation_contract_failed")
                     if require_model and event_type == "completed" and event.get("fallback"):
                         raise AcceptanceError(
                             f"real_model_required_but_streaming_fallback_used:{event.get('error')}"
                         )
-            if stream_conversation:
-                conversation_ids.add(stream_conversation)
             if "started" not in event_types or "completed" not in event_types:
                 raise AcceptanceError(f"stream_event_contract_failed:{event_types}")
             checks["streaming"] = {"ok": True, "events": event_types}
@@ -137,18 +138,17 @@ def run_acceptance(
                 raise AcceptanceError("memory_retrieval_failed")
             checks["memory"] = True
 
-            doc_marker = f"acceptance-doc-{uuid.uuid4().hex}"
             upload = _require(
                 client.post(
                     "/v1/knowledge/upload",
                     files={
                         "file": (
-                            "acceptance.txt",
+                            "lumi-acceptance.txt",
                             f"{doc_marker} local grounded retrieval probe".encode(),
                             "text/plain",
                         )
                     },
-                    data={"title": "Acceptance document", "source": "acceptance"},
+                    data={"title": "Lumi acceptance document", "source": "acceptance"},
                 )
             )
             document_id = str(upload["document_id"])
@@ -158,7 +158,11 @@ def run_acceptance(
             hits = query.get("hits", [])
             if not hits or not any(hit.get("document_id") == document_id for hit in hits):
                 raise AcceptanceError("knowledge_retrieval_failed")
-            checks["knowledge"] = True
+            checks["knowledge"] = {
+                "ok": True,
+                "document_id": document_id,
+                "deduplicated": bool(upload.get("deduplicated")),
+            }
 
             tools = _require(client.get("/v1/tools"))
             if not tools.get("tools"):
@@ -171,29 +175,9 @@ def run_acceptance(
             checks["backup"] = {"ok": True, "path": backup.get("backup")}
         finally:
             if memory_id:
-                try:
-                    response = client.delete(f"/v1/memories/{memory_id}")
-                    if response.status_code not in {200, 404}:
-                        cleanup_errors.append(f"memory:{response.status_code}")
-                except Exception as exc:  # pragma: no cover - defensive cleanup
-                    cleanup_errors.append(f"memory:{type(exc).__name__}")
-            if document_id:
-                try:
-                    response = client.delete(f"/v1/knowledge/documents/{document_id}")
-                    if response.status_code not in {200, 404}:
-                        cleanup_errors.append(f"document:{response.status_code}")
-                except Exception as exc:  # pragma: no cover - defensive cleanup
-                    cleanup_errors.append(f"document:{type(exc).__name__}")
-            for conversation_id in conversation_ids:
-                try:
-                    response = client.delete(f"/v1/conversations/{conversation_id}")
-                    if response.status_code not in {200, 404}:
-                        cleanup_errors.append(f"conversation:{response.status_code}")
-                except Exception as exc:  # pragma: no cover - defensive cleanup
-                    cleanup_errors.append(f"conversation:{type(exc).__name__}")
-
-    if cleanup_errors:
-        raise AcceptanceError("acceptance_cleanup_failed:" + ",".join(cleanup_errors))
+                response = client.delete(f"/v1/memories/{memory_id}")
+                if response.status_code not in {200, 404}:
+                    raise AcceptanceError(f"acceptance_memory_cleanup_failed:{response.status_code}")
 
     return {
         "ok": True,
@@ -204,5 +188,5 @@ def run_acceptance(
         "fallback": bool(chat.get("fallback")),
         "stream_events": event_types,
         "checks": checks,
-        "temporary_state_cleaned": True,
+        "repeatable_probe": True,
     }
