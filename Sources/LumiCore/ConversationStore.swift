@@ -36,20 +36,6 @@ public protocol ConversationStore: Sendable {
     func clear(conversationID: UUID) async throws
 }
 
-public extension ConversationStore {
-    func createConversation(
-        id: UUID = UUID(),
-        title: String = "New chat",
-        createdAt: Date = Date()
-    ) async throws -> Conversation {
-        try await createConversation(id: id, title: title, createdAt: createdAt)
-    }
-
-    func listConversations(limit: Int = 100) async throws -> [Conversation] {
-        try await listConversations(limit: limit)
-    }
-}
-
 public actor InMemoryConversationStore: ConversationStore {
     private var conversations: [UUID: Conversation] = [:]
     private var messages: [UUID: [ChatMessage]] = [:]
