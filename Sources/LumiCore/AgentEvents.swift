@@ -8,8 +8,9 @@ public enum AgentEvent: Hashable, Sendable {
     case toolFinished(runID: UUID, result: ToolResult)
     case confirmationRequired(runID: UUID, call: ToolCall)
     case terminal(AgentRun)
+    case runtimeFailure(runID: UUID?, message: String)
 
-    public var runID: UUID {
+    public var runID: UUID? {
         switch self {
         case .runUpdated(let run), .terminal(let run):
             return run.id
@@ -17,13 +18,15 @@ public enum AgentEvent: Hashable, Sendable {
              .toolFinished(let runID, _),
              .confirmationRequired(let runID, _):
             return runID
+        case .runtimeFailure(let runID, _):
+            return runID
         }
     }
 
     public var runSnapshot: AgentRun? {
         switch self {
         case .runUpdated(let run), .terminal(let run): return run
-        case .toolStarted, .toolFinished, .confirmationRequired: return nil
+        case .toolStarted, .toolFinished, .confirmationRequired, .runtimeFailure: return nil
         }
     }
 }
