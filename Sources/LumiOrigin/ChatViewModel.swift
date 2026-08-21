@@ -33,6 +33,8 @@ final class ChatViewModel: ObservableObject {
     @Published var conversationTitleDraft = ""
     @Published var isSessionReady = false
     @Published var conversationError: String?
+    @Published var hasOlderMessages = false
+    @Published var isLoadingOlderMessages = false
 
     @Published var agentGoal = ""
     @Published var activeAgentRun: AgentRun?
@@ -46,6 +48,8 @@ final class ChatViewModel: ObservableObject {
     private var engine: LumiEngine
     private var sendTask: Task<Void, Never>?
     private var agentTask: Task<Void, Never>?
+    private var transcriptCursor: ConversationTranscriptCursor?
+    private let transcriptPageSize = 60
 
     init(runtime: LumiRuntimeContainer = .persistentDefault()) {
         self.sessionRuntime = runtime
@@ -56,7 +60,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// Test/embedding convenience for callers that provide one explicitly scoped engine.
-    /// Multi-session controls are disabled because the engine's dependency graph is opaque here.
+    /// Multi-session paging controls are disabled because the engine's dependency graph is opaque here.
     init(engine: LumiEngine) {
         self.sessionRuntime = nil
         self.engine = engine
@@ -72,7 +76,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     var canChangeConversation: Bool {
-        isSessionReady && !isSending && !isAgentRunning
+        isSessionReady && !isSending && !isAgentRunning && !isLoadingOlderMessages
     }
 
     func send() {
@@ -107,7 +111,11 @@ final class ChatViewModel: ObservableObject {
                         // The request engine is immutable to one session. If UI session state ever
                         // changes independently, do not project old-session messages into the new UI.
                         if conversationID == activeConversationID {
-                            messages = await requestEngine.messages()
+                            await refreshNewestTranscriptPage(
+                                conversationID: conversationID,
+                                fallbackEngine: requestEngine,
+                                preservingLoadedOlder: true
+                            )
                             streamingText = ""
                             lastIntent = reply.intent
                             classification = reply.classification
@@ -124,7 +132,11 @@ final class ChatViewModel: ObservableObject {
                 }
             } catch {
                 if conversationID == activeConversationID {
-                    messages = await requestEngine.messages()
+                    await refreshNewestTranscriptPage(
+                        conversationID: conversationID,
+                        fallbackEngine: requestEngine,
+                        preservingLoadedOlder: true
+                    )
                     streamingText = ""
 
                     if Task.isCancelled {
@@ -147,6 +159,40 @@ final class ChatViewModel: ObservableObject {
         guard isSending else { return }
         sendTask?.cancel()
         status = "Stopping"
+    }
+
+    func loadOlderMessages() {
+        guard !isLoadingOlderMessages,
+              hasOlderMessages,
+              let cursor = transcriptCursor,
+              let conversationID = activeConversationID,
+              let sessionRuntime else { return }
+
+        isLoadingOlderMessages = true
+        conversationError = nil
+
+        Task {
+            do {
+                let page = try await sessionRuntime.transcriptPage(
+                    conversationID: conversationID,
+                    before: cursor,
+                    limit: transcriptPageSize
+                )
+                guard conversationID == activeConversationID else {
+                    isLoadingOlderMessages = false
+                    return
+                }
+
+                let existingIDs = Set(messages.map(\.id))
+                let uniqueOlder = page.messages.filter { !existingIDs.contains($0.id) }
+                messages = uniqueOlder + messages
+                transcriptCursor = page.olderCursor
+                hasOlderMessages = page.hasOlder
+            } catch {
+                conversationError = error.localizedDescription
+            }
+            isLoadingOlderMessages = false
+        }
     }
 
     func createConversation() {
@@ -341,6 +387,9 @@ final class ChatViewModel: ObservableObject {
 
         Task {
             await requestEngine.clearConversation()
+            transcriptCursor = nil
+            hasOlderMessages = false
+            isLoadingOlderMessages = false
             resetConversationPresentation(messages: [])
             status = "Local-first"
             isSending = false
@@ -435,13 +484,73 @@ final class ChatViewModel: ObservableObject {
         runtime: LumiRuntimeContainer
     ) async throws {
         let newEngine = runtime.makeEngine(conversationID: conversation.id)
-        let restored = try await newEngine.restoreConversation()
+        // Restore the full durable history into bounded working memory so compaction can be rebuilt,
+        // but expose only a paged durable transcript to presentation.
+        _ = try await newEngine.restoreConversation()
+        let page = try await runtime.transcriptPage(
+            conversationID: conversation.id,
+            before: nil,
+            limit: transcriptPageSize
+        )
+
         engine = newEngine
         activeConversationID = conversation.id
         conversationTitleDraft = conversation.title
-        resetConversationPresentation(messages: restored)
+        transcriptCursor = page.olderCursor
+        hasOlderMessages = page.hasOlder
+        isLoadingOlderMessages = false
+        resetConversationPresentation(messages: page.messages)
         refreshMemories()
         refreshAgentRuns()
+    }
+
+    private func refreshNewestTranscriptPage(
+        conversationID: UUID?,
+        fallbackEngine: LumiEngine,
+        preservingLoadedOlder: Bool
+    ) async {
+        guard let conversationID,
+              let sessionRuntime else {
+            let workingMessages = await fallbackEngine.messages()
+            messages = workingMessages.filter { $0.role != .system }
+            return
+        }
+
+        do {
+            let page = try await sessionRuntime.transcriptPage(
+                conversationID: conversationID,
+                before: nil,
+                limit: transcriptPageSize
+            )
+            guard conversationID == activeConversationID else { return }
+
+            if preservingLoadedOlder,
+               let oldestNewestPage = page.messages.first {
+                let latestIDs = Set(page.messages.map(\.id))
+                let preservedOlder = messages.filter {
+                    $0.role != .system
+                        && !latestIDs.contains($0.id)
+                        && $0.timestamp <= oldestNewestPage.timestamp
+                }
+
+                if preservedOlder.isEmpty {
+                    messages = page.messages
+                    transcriptCursor = page.olderCursor
+                    hasOlderMessages = page.hasOlder
+                } else {
+                    messages = preservedOlder + page.messages
+                    // Keep the existing cursor: it points immediately before the oldest loaded page.
+                }
+            } else {
+                messages = page.messages
+                transcriptCursor = page.olderCursor
+                hasOlderMessages = page.hasOlder
+            }
+        } catch {
+            conversationError = error.localizedDescription
+            let workingMessages = await fallbackEngine.messages()
+            messages = workingMessages.filter { $0.role != .system }
+        }
     }
 
     private func reloadConversations() async {
@@ -660,7 +769,9 @@ final class ChatViewModel: ObservableObject {
         Task {
             do {
                 let restored = try await requestEngine.restoreConversation()
-                messages = restored
+                messages = restored.filter { $0.role != .system }
+                transcriptCursor = nil
+                hasOlderMessages = false
                 if !restored.isEmpty { status = "History restored" }
             } catch {
                 status = "Storage error"
