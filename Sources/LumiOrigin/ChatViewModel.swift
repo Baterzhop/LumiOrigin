@@ -524,7 +524,11 @@ final class ChatViewModel: ObservableObject {
             )
             guard conversationID == activeConversationID else { return }
 
+            // Preserve earlier pages only after the user actually loaded beyond the newest page.
+            // This also discards the optimistic user bubble in short chats and replaces it with the
+            // canonical persisted user message, avoiding duplicate user turns after completion.
             if preservingLoadedOlder,
+               messages.count > transcriptPageSize,
                let oldestNewestPage = page.messages.first {
                 let latestIDs = Set(page.messages.map(\.id))
                 let preservedOlder = messages.filter {
