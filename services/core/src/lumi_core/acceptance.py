@@ -34,10 +34,9 @@ def run_acceptance(
 ) -> dict:
     """Run the installed-runtime acceptance contract against a live Lumi Core.
 
-    The probe deliberately reuses one dedicated conversation and one deterministic
-    knowledge document so repeated checks do not create unbounded database state.
-    The temporary durable-memory record is removed after every run. A verified
-    database backup is intentionally retained as the recovery-path probe.
+    The probe uses a reserved conversation and deterministic knowledge document,
+    verifies all temporary state, then deletes that state. A verified database
+    backup is intentionally retained as the recovery-path evidence artifact.
     """
 
     base = base_url.rstrip("/")
@@ -46,10 +45,13 @@ def run_acceptance(
     headers = {"X-Lumi-Key": api_key} if api_key else {}
     checks: dict[str, object] = {}
     memory_id: str | None = None
+    document_id: str | None = None
     chat: dict = {}
     event_types: list[str] = []
     conversation_id = "lumi-acceptance"
     doc_marker = "lumi-acceptance-grounded-retrieval-probe-v1"
+    primary_error: Exception | None = None
+    cleanup_errors: list[str] = []
 
     with httpx.Client(
         base_url=base,
@@ -57,6 +59,11 @@ def run_acceptance(
         timeout=timeout_seconds,
         transport=transport,
     ) as client:
+        # Remove a stale reserved conversation from an interrupted older probe.
+        stale = client.delete(f"/v1/conversations/{conversation_id}")
+        if stale.status_code not in {200, 404}:
+            raise AcceptanceError(f"acceptance_precleanup_failed:{stale.status_code}")
+
         try:
             health = _require(client.get("/health"))
             if health.get("ok") is not True:
@@ -173,11 +180,27 @@ def run_acceptance(
             if backup.get("ok") is not True or not backup.get("backup"):
                 raise AcceptanceError("backup_probe_failed")
             checks["backup"] = {"ok": True, "path": backup.get("backup")}
+        except Exception as exc:
+            primary_error = exc
         finally:
             if memory_id:
                 response = client.delete(f"/v1/memories/{memory_id}")
                 if response.status_code not in {200, 404}:
-                    raise AcceptanceError(f"acceptance_memory_cleanup_failed:{response.status_code}")
+                    cleanup_errors.append(f"memory:{response.status_code}")
+            if document_id:
+                response = client.delete(f"/v1/knowledge/documents/{document_id}")
+                if response.status_code not in {200, 404}:
+                    cleanup_errors.append(f"document:{response.status_code}")
+            response = client.delete(f"/v1/conversations/{conversation_id}")
+            if response.status_code not in {200, 404}:
+                cleanup_errors.append(f"conversation:{response.status_code}")
+
+    if primary_error is not None:
+        if cleanup_errors:
+            primary_error.add_note("Acceptance cleanup also failed: " + ", ".join(cleanup_errors))
+        raise primary_error
+    if cleanup_errors:
+        raise AcceptanceError("acceptance_cleanup_failed:" + ",".join(cleanup_errors))
 
     return {
         "ok": True,
@@ -188,5 +211,5 @@ def run_acceptance(
         "fallback": bool(chat.get("fallback")),
         "stream_events": event_types,
         "checks": checks,
-        "repeatable_probe": True,
+        "temporary_state_cleaned": True,
     }
