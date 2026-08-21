@@ -100,6 +100,7 @@ public struct HeuristicRequestClassifier: RequestClassifying, Sendable {
     private let codingSignals = [
         " code", "code ", "swift", "python", "javascript", "typescript", "compile", "compiler",
         "refactor", "debug", "stack trace", "api", "github", " git ", "repository", "pull request",
+        "push commit", "push the commit",
         "код", "свіфт", "пайтон", "компілю", "рефактор", "дебаг", "гетхаб", "репозитор"
     ]
 
@@ -137,7 +138,7 @@ public struct HeuristicRequestClassifier: RequestClassifying, Sendable {
     private let toolSignals = [
         "run command", "execute command", "run the script", "open file", "open the file", "create file",
         "create a file", "delete file", "delete the file", "remove file", "rename file", "move file",
-        "send email", "send message", "create repository", "create repo", "push commit", "merge pull request",
+        "send email", "send message", "create repository", "create repo", "push commit", "push the commit", "merge pull request",
         "запусти команд", "виконай команд", "відкрий файл", "створи файл", "видали файл", "перейменуй файл",
         "надішли лист", "відправ лист", "створи репозитор", "запуш", "змердж"
     ]
@@ -148,7 +149,7 @@ public struct HeuristicRequestClassifier: RequestClassifying, Sendable {
     ]
 
     private let mediumRiskSignals = [
-        "send email", "send message", "publish", "push commit", "merge pull request", "create repository",
+        "send email", "send message", "publish", "push commit", "push the commit", "merge pull request", "create repository",
         "write file", "rename file", "move file", "надішли", "відправ", "опублікуй", "запуш", "змердж", "створи репозитор"
     ]
 }
