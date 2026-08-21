@@ -1,4 +1,4 @@
-# Lumi V4 RC3 Release Checklist
+# Lumi V4 RC4 Release Checklist
 
 A release candidate is considered repository-ready only when every automatable item below is green on the exact candidate commit.
 
@@ -15,6 +15,11 @@ A release candidate is considered repository-ready only when every automatable i
 - [ ] Python release artifacts produce a valid `SHA256SUMS` manifest.
 - [ ] Swift debug build and tests.
 - [ ] Native Core URL security tests: loopback HTTP accepted, remote HTTP rejected, remote HTTPS accepted, embedded credentials/query/fragment rejected.
+- [ ] Native Ollama server URL uses the same safe boundary.
+- [ ] Model-name validation rejects empty/whitespace/control-character names.
+- [ ] Saved model settings map to `LUMI_OLLAMA_URL`, `LUMI_OLLAMA_EMBED_URL`, `LUMI_OLLAMA_MODEL`, `LUMI_EMBEDDING_MODEL` and `LUMI_RAG_DENSE` for the managed Core.
+- [ ] Explicit process environment values are never overwritten by the saved model settings.
+- [ ] Ollama model discovery decodes/sorts/deduplicates `GET /api/tags` using injectable typed HTTP transport.
 - [ ] Native diagnostics surface builds and remains metadata-only by design.
 - [ ] macOS release app bundle build, plist lint and code-sign verification.
 - [ ] macOS ZIP produces a matching `.sha256` file and checksum verification passes.
@@ -32,12 +37,17 @@ git clone https://github.com/Baterzhop/LumiOrigin.git
 cd LumiOrigin
 bash scripts/install_lumi.sh
 open "$HOME/Applications/Lumi.app"
+```
+
+In **Lumi → Settings**, discover the installed Ollama models, select the actual chat model, save it and restart the managed Core. Then run:
+
+```bash
 "$HOME/Library/Application Support/Lumi/runtime/venv/bin/python" scripts/acceptance_local.py --require-model
 ```
 
-The acceptance command must complete with `"ok": true` and report `fallback: false` for the configured local model.
+The acceptance command must complete with `"ok": true` and report `fallback: false` for the selected local model.
 
-The app itself must additionally be opened once and confirm that it can start the local Core without a terminal remaining open. Knowledge/citations, durable memory, one read-only tool, one approval-gated write, backup/restore and managed-Core shutdown should also be checked on the real machine before GA.
+The app itself must additionally confirm that it can start the local Core without a terminal remaining open. Knowledge/citations, durable memory, one read-only tool, one approval-gated write, backup/restore and managed-Core shutdown should also be checked on the real machine before GA.
 
 ## Distribution gate
 
