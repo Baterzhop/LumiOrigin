@@ -164,7 +164,7 @@ final class TranscriptPagingTests: XCTestCase {
         let workingContext = await engine.memory.all()
         XCTAssertEqual(workingContext.first?.role, .system, "Working context should contain compaction after overflow.")
 
-        let durable = try await engine.durableTranscript()
+        let durable = try await store.loadMessages(conversationID: conversationID)
         XCTAssertEqual(durable.count, 14)
         XCTAssertFalse(durable.contains(where: { $0.role == .system }))
         XCTAssertFalse(durable.contains(where: { $0.content.contains("Compacted earlier conversation context") }))
