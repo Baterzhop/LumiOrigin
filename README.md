@@ -80,7 +80,43 @@ Lumi Core (Python)
 - Deterministic RAG and memory retrieval regression gates run in CI.
 - Python unit/API/security/developer tests on Linux/macOS plus Swift build/tests in CI.
 
-## Run Lumi Core
+## Alpha install
+
+The H2 release-engineering path installs Lumi Core with the committed Python 3.12 direct-dependency constraints and runs storage diagnostics:
+
+```bash
+./scripts/install_lumi.sh
+./scripts/start_lumi.sh
+```
+
+Operational commands are exposed through the installed `lumi-core` CLI:
+
+```bash
+.lumi-runtime/venv/bin/lumi-core doctor --strict
+.lumi-runtime/venv/bin/lumi-core backup --full-check
+# Stop Core before restoring:
+.lumi-runtime/venv/bin/lumi-core restore /path/to/backup.sqlite3 --yes
+```
+
+The native macOS client has a standard **Settings** window for the Core base URL and API key. API keys are stored in macOS Keychain. Changing connection settings requires an app restart so all windows use one consistent client instance.
+
+Build the controlled alpha `.app` package:
+
+```bash
+./scripts/build_macos_app.sh
+```
+
+This produces `dist/Lumi.app` and `dist/Lumi-macOS-alpha.zip`. Alpha packages are ad-hoc signed for local testing; they are not Developer-ID signed or notarized.
+
+Run the deterministic process-level Core acceptance test:
+
+```bash
+python scripts/acceptance_local.py
+```
+
+See `docs/release.md` and `RELEASE_CHECKLIST.md` before creating an alpha tag.
+
+## Manual development run
 
 ```bash
 python3 -m venv .venv
@@ -146,7 +182,7 @@ python -m pip install -e "services/core[rerank]"
 export LUMI_RERANKER_MODEL=<cross-encoder-model>
 ```
 
-## Run macOS client
+## Run macOS client from source
 
 ```bash
 cd apps/macos
@@ -164,4 +200,4 @@ python scripts/eval_memory.py --assert-thresholds
 cd apps/macos && swift test
 ```
 
-See `docs/architecture.md`, `docs/event-protocol.md`, `docs/rag.md`, `docs/tools.md`, `docs/memory.md`, and `docs/developer-agent.md` for design contracts and current limitations.
+See `docs/architecture.md`, `docs/event-protocol.md`, `docs/rag.md`, `docs/tools.md`, `docs/memory.md`, `docs/developer-agent.md`, `docs/hardening.md`, and `docs/release.md` for design contracts and current limitations.
