@@ -36,7 +36,7 @@ final class ChatViewModel: ObservableObject {
         agentTask?.toolCalls.first(where: { $0.status == "awaiting_approval" })
     }
 
-    init(api: LumiAPIClient = LumiAPIClient()) {
+    init(api: LumiAPIClient = LumiClientConfiguration.configuredClient()) {
         self.api = api
     }
 

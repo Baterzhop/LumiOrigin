@@ -12,7 +12,7 @@ final class DeveloperViewModel: ObservableObject {
 
     private let api: LumiAPIClient
 
-    init(api: LumiAPIClient = LumiAPIClient()) {
+    init(api: LumiAPIClient = LumiClientConfiguration.configuredClient()) {
         self.api = api
     }
 

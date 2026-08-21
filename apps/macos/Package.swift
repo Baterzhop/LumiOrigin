@@ -11,7 +11,12 @@ let package = Package(
         .executable(name: "LumiDesktop", targets: ["LumiDesktop"])
     ],
     targets: [
-        .target(name: "LumiClientCore"),
+        .target(
+            name: "LumiClientCore",
+            linkerSettings: [
+                .linkedFramework("Security")
+            ]
+        ),
         .executableTarget(name: "LumiDesktop", dependencies: ["LumiClientCore"]),
         .testTarget(name: "LumiClientCoreTests", dependencies: ["LumiClientCore"])
     ]
