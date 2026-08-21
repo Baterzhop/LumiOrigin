@@ -20,16 +20,17 @@ public enum ToolCapability: String, Codable, Sendable {
     case writeUserFile
     case writeUserMemory
     case deleteUserMemory
+    case writeUserTask
     case externalAction
     case systemCommand
     case modifyCode
 
-    /// Persistent personal-memory mutation and user-file mutation are always
-    /// approved per exact operation. A session grant would otherwise let a
-    /// later model proposal reuse authority to change durable user data.
+    /// Persistent user-data mutations are always approved per exact operation.
+    /// A session grant would otherwise let a later model proposal reuse authority
+    /// to change durable state without another explicit user decision.
     public var supportsSessionGrant: Bool {
         switch self {
-        case .writeUserFile, .writeUserMemory, .deleteUserMemory:
+        case .writeUserFile, .writeUserMemory, .deleteUserMemory, .writeUserTask:
             return false
         default:
             return true
@@ -43,6 +44,7 @@ public struct ResourceScope: Hashable, Codable, Sendable {
         case file
         case userFile
         case userMemory
+        case userTask
         case directory
         case externalService
         case system
@@ -70,6 +72,16 @@ public struct ResourceScope: Hashable, Codable, Sendable {
     /// key before constructing this scope so a grant cannot alias another memory.
     public static func userMemory(_ canonicalKey: String) -> ResourceScope {
         ResourceScope(kind: .userMemory, identifier: canonicalKey)
+    }
+
+    public static func userTask(_ id: TaskID) -> ResourceScope {
+        ResourceScope(kind: .userTask, identifier: id.description)
+    }
+
+    /// Task creation has no stable TaskID until the approved write executes.
+    /// Exact creation parameters remain bound through PermissionRequest.details.
+    public static var newUserTask: ResourceScope {
+        ResourceScope(kind: .userTask, identifier: "new")
     }
 }
 
