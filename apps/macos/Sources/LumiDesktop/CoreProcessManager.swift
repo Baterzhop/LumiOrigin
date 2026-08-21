@@ -34,8 +34,8 @@ final class CoreProcessManager: ObservableObject {
         detail = "Checking Lumi Core…"
         let client = LumiClientConfiguration.configuredClient()
         if await isHealthy(client) {
-            state = .connected
-            detail = "Lumi Core is ready."
+            state = process?.isRunning == true ? .runningManaged : .connected
+            detail = process?.isRunning == true ? "Lumi Core is running with the app." : "Lumi Core is ready."
             return
         }
 
@@ -144,15 +144,6 @@ final class CoreProcessManager: ObservableObject {
         process.currentDirectoryURL = applicationSupport
         process.standardOutput = handle
         process.standardError = handle
-        process.terminationHandler = { [weak self] process in
-            Task { @MainActor in
-                guard let self else { return }
-                if !self.isStopping && process.terminationStatus != 0 {
-                    self.state = .failed("Core exited with status \(process.terminationStatus)")
-                    self.detail = "Lumi Core stopped unexpectedly. See ~/Library/Logs/Lumi/core.log."
-                }
-            }
-        }
         try process.run()
         self.process = process
         self.logHandle = handle
@@ -161,6 +152,12 @@ final class CoreProcessManager: ObservableObject {
     private func waitUntilReady(_ client: LumiAPIClient) async {
         for _ in 0..<80 {
             if Task.isCancelled { return }
+            if process != nil && process?.isRunning == false {
+                let status = process?.terminationStatus ?? -1
+                state = .failed("Core exited with status \(status)")
+                detail = "Lumi Core stopped during startup. See ~/Library/Logs/Lumi/core.log."
+                return
+            }
             if await isHealthy(client) {
                 state = process?.isRunning == true ? .runningManaged : .connected
                 detail = process?.isRunning == true ? "Lumi Core started by the app." : "Lumi Core is ready."
