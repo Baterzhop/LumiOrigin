@@ -28,6 +28,12 @@ struct AgentSidebarSection: View {
                 }
             }
 
+            if let activity = model.agentActivity, !activity.isEmpty {
+                Label(activity, systemImage: "waveform.path")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let run = model.activeAgentRun {
                 runSummary(run)
             }
