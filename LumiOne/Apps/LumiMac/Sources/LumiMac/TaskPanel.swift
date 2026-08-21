@@ -282,7 +282,7 @@ private struct TaskEditorCard: View {
         .padding(9)
         .frame(width: 330, alignment: .leading)
         .background(
-            selected ? .quaternary.opacity(0.65) : .quaternary.opacity(0.35),
+            selected ? Color.secondary.opacity(0.18) : Color.secondary.opacity(0.08),
             in: RoundedRectangle(cornerRadius: 10)
         )
         .contentShape(Rectangle())
