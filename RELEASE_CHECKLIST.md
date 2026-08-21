@@ -1,4 +1,4 @@
-# Lumi V4 RC2 Release Checklist
+# Lumi V4 RC3 Release Checklist
 
 A release candidate is considered repository-ready only when every automatable item below is green on the exact candidate commit.
 
@@ -12,9 +12,12 @@ A release candidate is considered repository-ready only when every automatable i
 - [ ] Live fallback HTTP/SSE acceptance against a real Core process.
 - [ ] Live primary-model + dense-embedding HTTP/SSE acceptance against the deterministic Ollama-compatible CI server.
 - [ ] Python wheel and source distribution build + clean-environment wheel smoke.
+- [ ] Python release artifacts produce a valid `SHA256SUMS` manifest.
 - [ ] Swift debug build and tests.
-- [ ] Native Core URL security tests: loopback HTTP accepted, remote HTTP rejected, remote HTTPS accepted.
+- [ ] Native Core URL security tests: loopback HTTP accepted, remote HTTP rejected, remote HTTPS accepted, embedded credentials/query/fragment rejected.
+- [ ] Native diagnostics surface builds and remains metadata-only by design.
 - [ ] macOS release app bundle build, plist lint and code-sign verification.
+- [ ] macOS ZIP produces a matching `.sha256` file and checksum verification passes.
 - [ ] `install_lumi.sh` production-style install on a clean macOS runner.
 - [ ] Stable runtime exists at `~/Library/Application Support/Lumi/runtime/venv/bin/lumi-core`.
 - [ ] Installed-runtime doctor passes.
@@ -22,7 +25,7 @@ A release candidate is considered repository-ready only when every automatable i
 
 ## Target-Mac gate
 
-This cannot be truthfully completed by GitHub-hosted runners because it depends on the physical Mac and the actual installed local model:
+This cannot be truthfully completed by GitHub-hosted runners because it depends on the physical Mac and the actual installed local model. The authoritative external checklist is GitHub issue #44.
 
 ```bash
 git clone https://github.com/Baterzhop/LumiOrigin.git
@@ -34,8 +37,12 @@ open "$HOME/Applications/Lumi.app"
 
 The acceptance command must complete with `"ok": true` and report `fallback: false` for the configured local model.
 
-The app itself must additionally be opened once and confirm that it can start the local Core without a terminal remaining open.
+The app itself must additionally be opened once and confirm that it can start the local Core without a terminal remaining open. Knowledge/citations, durable memory, one read-only tool, one approval-gated write, backup/restore and managed-Core shutdown should also be checked on the real machine before GA.
 
 ## Distribution gate
 
 For local use, ad-hoc code signing is sufficient. Public distribution additionally requires a valid Apple Developer ID, notarization credentials, and a successful notarization/stapling check. Lumi does not claim notarization until those credentials are configured and the process has actually passed.
+
+## GA invariant
+
+Do not change the release line to `4.0.0` final solely because repository CI is green. GA requires the physical target-Mac real-model gate above. Public downloadable distribution additionally requires the distribution gate.
