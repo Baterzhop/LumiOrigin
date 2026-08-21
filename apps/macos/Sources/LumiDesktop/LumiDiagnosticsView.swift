@@ -67,11 +67,12 @@ struct LumiDiagnosticsView: View {
         let client = LumiClientConfiguration.configuredClient()
         let runtimeURL = CoreProcessManager.findCoreExecutable()?.path ?? "not found"
         let keyState = LumiClientConfiguration.hasStoredAPIKey() ? "stored in Keychain" : "not stored"
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
 
         var lines: [String] = [
             "Lumi diagnostics",
             "================",
-            "App version: \(Bundle.main.object(forInfoDictionaryKey: \"CFBundleShortVersionString\") as? String ?? \"development\")",
+            "App version: \(appVersion)",
             "macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
             "Architecture: \(architectureName)",
             "Core manager: \(stateName(coreManager.state))",
@@ -92,9 +93,10 @@ struct LumiDiagnosticsView: View {
 
         do {
             let runtime = try await client.runtimeStatus()
+            let semanticState = runtime.memory?.semanticEnabled == true ? "enabled" : "disabled"
             lines.append("Runtime: ok=\(runtime.ok) provider=\(runtime.provider) model=\(runtime.model)")
             lines.append("Registered tools: \(runtime.tools?.count ?? 0)")
-            lines.append("Memory semantic retrieval: \(runtime.memory?.semanticEnabled == true ? \"enabled\" : \"disabled\")")
+            lines.append("Memory semantic retrieval: \(semanticState)")
         } catch {
             lines.append("Runtime metadata: unavailable (\(safeError(error)))")
         }
