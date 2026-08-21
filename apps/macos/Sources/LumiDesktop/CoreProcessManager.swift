@@ -45,7 +45,7 @@ final class CoreProcessManager: ObservableObject {
             return
         }
 
-        guard process == nil || process?.isRunning == false else {
+        if process?.isRunning == true {
             await waitUntilReady(client)
             return
         }
@@ -116,9 +116,7 @@ final class CoreProcessManager: ObservableObject {
     }
 
     private func launch(executable: URL, baseURL: URL) throws {
-        guard let port = baseURL.port ?? (baseURL.scheme == "https" ? 443 : 80) as Int? else {
-            throw NSError(domain: "Lumi", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid Core port"])
-        }
+        let port = baseURL.port ?? (baseURL.scheme?.lowercased() == "https" ? 443 : 80)
 
         let fm = FileManager.default
         let applicationSupport = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Lumi")
@@ -129,7 +127,7 @@ final class CoreProcessManager: ObservableObject {
 
         let logURL = logsDirectory.appendingPathComponent("core.log")
         if !fm.fileExists(atPath: logURL.path) {
-            fm.createFile(atPath: logURL.path, contents: nil)
+            _ = fm.createFile(atPath: logURL.path, contents: nil)
         }
         let handle = try FileHandle(forWritingTo: logURL)
         handle.seekToEndOfFile()
