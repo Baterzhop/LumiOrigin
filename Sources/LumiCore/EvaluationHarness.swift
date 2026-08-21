@@ -218,4 +218,31 @@ public enum LumiBaselineEvaluations {
             requiredCapabilities: [.web, .retrieval]
         )
     ]
+
+    public static let bootstrapRetrieval: [RetrievalEvalCase] = [
+        RetrievalEvalCase(
+            id: "bootstrap-architecture",
+            query: "Lumi V4 architecture orchestration context retrieval",
+            relevantDocumentIDs: ["lumi-architecture"],
+            topK: 3
+        ),
+        RetrievalEvalCase(
+            id: "bootstrap-model",
+            query: "Ollama local model provider endpoint",
+            relevantDocumentIDs: ["lumi-model"],
+            topK: 3
+        ),
+        RetrievalEvalCase(
+            id: "bootstrap-memory",
+            query: "long-term memory persisted privacy lifecycle",
+            relevantDocumentIDs: ["lumi-memory"],
+            topK: 3
+        ),
+        RetrievalEvalCase(
+            id: "bootstrap-agent-security",
+            query: "ToolRuntime AgentRuntime sandbox security bounded checkpoints",
+            relevantDocumentIDs: ["lumi-tools"],
+            topK: 3
+        )
+    ]
 }
