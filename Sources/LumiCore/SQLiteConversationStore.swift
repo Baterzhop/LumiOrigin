@@ -30,6 +30,128 @@ public actor SQLiteConversationStore: ConversationStore {
             .appendingPathComponent("lumi.sqlite3")
     }
 
+    public func createConversation(id: UUID, title: String, createdAt: Date) throws -> Conversation {
+        let cleanTitle = try Self.validatedTitle(title)
+        let db = try openIfNeeded()
+        let statement = try prepare(
+            "INSERT OR IGNORE INTO conversations(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);",
+            db: db
+        )
+        defer { sqlite3_finalize(statement) }
+
+        try bind(id.uuidString, index: 1, statement: statement, db: db)
+        try bind(cleanTitle, index: 2, statement: statement, db: db)
+        guard
+            sqlite3_bind_double(statement, 3, createdAt.timeIntervalSince1970) == SQLITE_OK,
+            sqlite3_bind_double(statement, 4, createdAt.timeIntervalSince1970) == SQLITE_OK,
+            sqlite3_step(statement) == SQLITE_DONE
+        else {
+            throw ConversationStoreError.writeFailed(message(db))
+        }
+
+        guard let stored = try conversation(id: id) else {
+            throw ConversationStoreError.writeFailed("Conversation insert completed without a readable row.")
+        }
+        return stored
+    }
+
+    public func conversation(id: UUID) throws -> Conversation? {
+        let db = try openIfNeeded()
+        let statement = try prepare(
+            """
+            SELECT
+                c.id,
+                c.title,
+                c.created_at,
+                c.updated_at,
+                (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+            FROM conversations c
+            WHERE c.id = ?
+            LIMIT 1;
+            """,
+            db: db
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(id.uuidString, index: 1, statement: statement, db: db)
+
+        let status = sqlite3_step(statement)
+        if status == SQLITE_DONE { return nil }
+        guard status == SQLITE_ROW else {
+            throw ConversationStoreError.statementFailed(message(db))
+        }
+        return try decodeConversation(statement)
+    }
+
+    public func listConversations(limit: Int) throws -> [Conversation] {
+        let finalLimit = max(0, min(limit, 500))
+        guard finalLimit > 0 else { return [] }
+
+        let db = try openIfNeeded()
+        let statement = try prepare(
+            """
+            SELECT
+                c.id,
+                c.title,
+                c.created_at,
+                c.updated_at,
+                COUNT(m.id) AS message_count
+            FROM conversations c
+            LEFT JOIN messages m ON m.conversation_id = c.id
+            GROUP BY c.id, c.title, c.created_at, c.updated_at
+            ORDER BY c.updated_at DESC, c.created_at DESC, c.id ASC
+            LIMIT ?;
+            """,
+            db: db
+        )
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_bind_int(statement, 1, Int32(finalLimit)) == SQLITE_OK else {
+            throw ConversationStoreError.statementFailed(message(db))
+        }
+
+        var conversations: [Conversation] = []
+        while true {
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { break }
+            guard status == SQLITE_ROW else {
+                throw ConversationStoreError.statementFailed(message(db))
+            }
+            conversations.append(try decodeConversation(statement))
+        }
+        return conversations
+    }
+
+    public func renameConversation(id: UUID, title: String) throws -> Conversation {
+        let cleanTitle = try Self.validatedTitle(title)
+        let db = try openIfNeeded()
+        let statement = try prepare(
+            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?;",
+            db: db
+        )
+        defer { sqlite3_finalize(statement) }
+
+        try bind(cleanTitle, index: 1, statement: statement, db: db)
+        guard sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970) == SQLITE_OK else {
+            throw ConversationStoreError.writeFailed(message(db))
+        }
+        try bind(id.uuidString, index: 3, statement: statement, db: db)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw ConversationStoreError.writeFailed(message(db))
+        }
+        guard sqlite3_changes(db) > 0 else { throw ConversationStoreError.notFound }
+        guard let updated = try conversation(id: id) else { throw ConversationStoreError.notFound }
+        return updated
+    }
+
+    public func deleteConversation(id: UUID) throws {
+        let db = try openIfNeeded()
+        let statement = try prepare("DELETE FROM conversations WHERE id = ?;", db: db)
+        defer { sqlite3_finalize(statement) }
+        try bind(id.uuidString, index: 1, statement: statement, db: db)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw ConversationStoreError.writeFailed(message(db))
+        }
+    }
+
     public func loadMessages(conversationID: UUID) throws -> [ChatMessage] {
         let db = try openIfNeeded()
         let statement = try prepare(
@@ -89,6 +211,16 @@ public actor SQLiteConversationStore: ConversationStore {
                 throw ConversationStoreError.writeFailed(message(db))
             }
 
+            let update = try prepare("UPDATE conversations SET updated_at = MAX(updated_at, ?) WHERE id = ?;", db: db)
+            defer { sqlite3_finalize(update) }
+            guard sqlite3_bind_double(update, 1, chatMessage.timestamp.timeIntervalSince1970) == SQLITE_OK else {
+                throw ConversationStoreError.writeFailed(message(db))
+            }
+            try bind(conversationID.uuidString, index: 2, statement: update, db: db)
+            guard sqlite3_step(update) == SQLITE_DONE else {
+                throw ConversationStoreError.writeFailed(message(db))
+            }
+
             try exec("COMMIT;", db: db, migration: false)
         } catch {
             try? exec("ROLLBACK;", db: db, migration: false)
@@ -96,13 +228,32 @@ public actor SQLiteConversationStore: ConversationStore {
         }
     }
 
+    /// Clears messages but preserves the conversation itself so it can remain the selected chat.
     public func clear(conversationID: UUID) throws {
         let db = try openIfNeeded()
-        let statement = try prepare("DELETE FROM conversations WHERE id = ?;", db: db)
-        defer { sqlite3_finalize(statement) }
-        try bind(conversationID.uuidString, index: 1, statement: statement, db: db)
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw ConversationStoreError.writeFailed(message(db))
+        try exec("BEGIN IMMEDIATE;", db: db, migration: false)
+        do {
+            let delete = try prepare("DELETE FROM messages WHERE conversation_id = ?;", db: db)
+            try bind(conversationID.uuidString, index: 1, statement: delete, db: db)
+            guard sqlite3_step(delete) == SQLITE_DONE else {
+                sqlite3_finalize(delete)
+                throw ConversationStoreError.writeFailed(message(db))
+            }
+            sqlite3_finalize(delete)
+
+            let update = try prepare("UPDATE conversations SET updated_at = ? WHERE id = ?;", db: db)
+            defer { sqlite3_finalize(update) }
+            guard sqlite3_bind_double(update, 1, Date().timeIntervalSince1970) == SQLITE_OK else {
+                throw ConversationStoreError.writeFailed(message(db))
+            }
+            try bind(conversationID.uuidString, index: 2, statement: update, db: db)
+            guard sqlite3_step(update) == SQLITE_DONE else {
+                throw ConversationStoreError.writeFailed(message(db))
+            }
+            try exec("COMMIT;", db: db, migration: false)
+        } catch {
+            try? exec("ROLLBACK;", db: db, migration: false)
+            throw error
         }
     }
 
@@ -162,8 +313,12 @@ public actor SQLiteConversationStore: ConversationStore {
         );
         CREATE INDEX IF NOT EXISTS idx_messages_conversation_timestamp
             ON messages(conversation_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
+            ON conversations(updated_at DESC);
         INSERT OR IGNORE INTO schema_migrations(version, applied_at)
             VALUES (1, strftime('%s','now'));
+        INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+            VALUES (2, strftime('%s','now'));
         """
         try exec(sql, db: db, migration: true)
     }
@@ -175,21 +330,35 @@ public actor SQLiteConversationStore: ConversationStore {
         )
         defer { sqlite3_finalize(insert) }
         try bind(id.uuidString, index: 1, statement: insert, db: db)
-        try bind("Lumi Conversation", index: 2, statement: insert, db: db)
+        try bind("New chat", index: 2, statement: insert, db: db)
         guard sqlite3_bind_double(insert, 3, timestamp.timeIntervalSince1970) == SQLITE_OK,
               sqlite3_bind_double(insert, 4, timestamp.timeIntervalSince1970) == SQLITE_OK,
               sqlite3_step(insert) == SQLITE_DONE
         else { throw ConversationStoreError.writeFailed(message(db)) }
+    }
 
-        let update = try prepare("UPDATE conversations SET updated_at = ? WHERE id = ?;", db: db)
-        defer { sqlite3_finalize(update) }
-        guard sqlite3_bind_double(update, 1, timestamp.timeIntervalSince1970) == SQLITE_OK else {
-            throw ConversationStoreError.writeFailed(message(db))
+    private func decodeConversation(_ statement: OpaquePointer) throws -> Conversation {
+        guard
+            let idText = text(statement, 0),
+            let id = UUID(uuidString: idText),
+            let title = text(statement, 1)
+        else {
+            throw ConversationStoreError.statementFailed("Conversation row is incomplete.")
         }
-        try bind(id.uuidString, index: 2, statement: update, db: db)
-        guard sqlite3_step(update) == SQLITE_DONE else {
-            throw ConversationStoreError.writeFailed(message(db))
-        }
+
+        return Conversation(
+            id: id,
+            title: title,
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 2)),
+            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 3)),
+            messageCount: Int(sqlite3_column_int64(statement, 4))
+        )
+    }
+
+    private static func validatedTitle(_ title: String) throws -> String {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { throw ConversationStoreError.invalidTitle }
+        return String(clean.prefix(120))
     }
 
     private func prepare(_ sql: String, db: OpaquePointer) throws -> OpaquePointer {
