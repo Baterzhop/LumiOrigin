@@ -37,9 +37,25 @@ struct ConversationSidebarSection: View {
                     )
 
                     Spacer()
-                    Text("\(active.messageCount) msg")
+                    Text("\(model.messages.count) / \(active.messageCount) msg")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
+                }
+
+                if model.hasOlderMessages || model.isLoadingOlderMessages {
+                    Button {
+                        model.loadOlderMessages()
+                    } label: {
+                        if model.isLoadingOlderMessages {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Loading earlier messages…")
+                            }
+                        } else {
+                            Label("Load earlier messages", systemImage: "arrow.up.circle")
+                        }
+                    }
+                    .disabled(model.isLoadingOlderMessages || model.isSending || model.isAgentRunning)
                 }
             }
 
