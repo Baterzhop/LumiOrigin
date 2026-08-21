@@ -47,6 +47,10 @@ public enum LumiClientConfiguration {
         return try? readKeychainAPIKey()
     }
 
+    public static func configuredClient() -> LumiAPIClient {
+        LumiAPIClient(baseURL: defaultBaseURL(), apiKey: defaultAPIKey())
+    }
+
     public static func validatedBaseURL(_ value: String) throws -> URL {
         let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: clean),
