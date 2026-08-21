@@ -219,7 +219,8 @@ def command_serve(args: argparse.Namespace) -> int:
         )
         return 2
     uvicorn.run(
-        "lumi_core.api.main:app",
+        "lumi_core.api.main:create_app",
+        factory=True,
         host=host,
         port=args.port,
         log_level=args.log_level,
