@@ -69,27 +69,36 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
             throw KnowledgeStoreError.statementFailed(message(db))
         }
 
-        guard
-            let sourceID = text(statement, 0),
-            let title = text(statement, 1),
-            let typeRaw = text(statement, 2),
-            let sourceType = KnowledgeSourceType(rawValue: typeRaw),
-            let tagsJSON = text(statement, 4),
-            let contentHash = text(statement, 5)
-        else {
-            throw KnowledgeStoreError.statementFailed("Knowledge source row is incomplete.")
+        return try decodeSourceRow(statement, db: db)
+    }
+
+    public func listSources(limit: Int = 100) throws -> [KnowledgeSourceRecord] {
+        let db = try openIfNeeded()
+        let statement = try prepare(
+            """
+            SELECT id, title, source_type, source_uri, tags_json, content_hash, created_at, updated_at
+            FROM knowledge_sources
+            ORDER BY updated_at DESC, title COLLATE NOCASE ASC
+            LIMIT ?;
+            """,
+            db: db
+        )
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_bind_int(statement, 1, Int32(max(0, min(limit, 10_000)))) == SQLITE_OK else {
+            throw KnowledgeStoreError.statementFailed(message(db))
         }
 
-        return KnowledgeSourceRecord(
-            id: sourceID,
-            title: title,
-            sourceType: sourceType,
-            sourceURI: text(statement, 3),
-            tags: decodeTags(tagsJSON),
-            contentHash: contentHash,
-            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6)),
-            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7))
-        )
+        var sources: [KnowledgeSourceRecord] = []
+        while true {
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { break }
+            guard status == SQLITE_ROW else {
+                throw KnowledgeStoreError.statementFailed(message(db))
+            }
+            sources.append(try decodeSourceRow(statement, db: db))
+        }
+        lastIssue = nil
+        return sources
     }
 
     public func removeSource(id: String) throws {
@@ -202,6 +211,30 @@ public actor SQLiteKnowledgeStore: KnowledgeStore {
 
     public func issue() -> String? {
         lastIssue
+    }
+
+    private func decodeSourceRow(_ statement: OpaquePointer, db: OpaquePointer) throws -> KnowledgeSourceRecord {
+        guard
+            let sourceID = text(statement, 0),
+            let title = text(statement, 1),
+            let typeRaw = text(statement, 2),
+            let sourceType = KnowledgeSourceType(rawValue: typeRaw),
+            let tagsJSON = text(statement, 4),
+            let contentHash = text(statement, 5)
+        else {
+            throw KnowledgeStoreError.statementFailed("Knowledge source row is incomplete.")
+        }
+
+        return KnowledgeSourceRecord(
+            id: sourceID,
+            title: title,
+            sourceType: sourceType,
+            sourceURI: text(statement, 3),
+            tags: decodeTags(tagsJSON),
+            contentHash: contentHash,
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6)),
+            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7))
+        )
     }
 
     private func openIfNeeded() throws -> OpaquePointer {
