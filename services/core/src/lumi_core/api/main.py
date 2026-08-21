@@ -11,6 +11,7 @@ from lumi_core.agent.generations import GenerationRegistry
 from lumi_core.agent.planner import LLMTaskPlanner
 from lumi_core.agent.runtime import AgentRuntime, ChatResponse, ChatStreamEvent
 from lumi_core.agent.task_runtime import TaskRuntime
+from lumi_core.api.hardening import configure_hardening
 from lumi_core.config import Settings
 from lumi_core.developer.api import build_developer_router
 from lumi_core.memory import ConversationContextManager, MemoryService, MemoryStore
@@ -20,6 +21,7 @@ from lumi_core.rag.ingestion import IngestionService
 from lumi_core.rag.rerank import CrossEncoderReranker
 from lumi_core.rag.retrieval import HybridRetriever
 from lumi_core.storage.database import Database
+from lumi_core.storage.maintenance import DatabaseMaintenance
 from lumi_core.tools import PolicyEngine, Workspace, build_default_registry
 
 
@@ -61,7 +63,15 @@ class MemoryQueryRequest(BaseModel):
 
 settings = Settings.from_env()
 database = Database(settings.database_path)
+database_maintenance = DatabaseMaintenance(database)
+if settings.backup_before_migrate and database.path.exists() and database.path.stat().st_size > 0:
+    database_maintenance.create_backup(settings.backup_dir, prefix="pre-migrate")
+    database_maintenance.prune_backups(settings.backup_dir, keep=settings.backup_keep, prefix="pre-migrate")
 database.migrate()
+integrity_ok, integrity_detail = database_maintenance.integrity_check()
+if not integrity_ok:
+    raise RuntimeError(f"database_integrity_check_failed:{integrity_detail}")
+
 model_gateway = ModelGateway(
     OllamaProvider(url=settings.ollama_url, model=settings.ollama_model, timeout_seconds=settings.model_timeout_seconds)
 )
@@ -110,7 +120,14 @@ tool_registry = build_default_registry(workspace, retriever)
 policy_engine = PolicyEngine()
 task_runtime = TaskRuntime(database, tool_registry, policy_engine, LLMTaskPlanner(model_gateway))
 
-app = FastAPI(title="Lumi Core", version=__version__)
+app = FastAPI(
+    title="Lumi Core",
+    version=__version__,
+    docs_url="/docs" if settings.api_docs_enabled else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
+)
+configure_hardening(app, settings)
 app.include_router(build_developer_router(settings, database, model_gateway))
 
 
@@ -123,6 +140,14 @@ def health() -> dict:
     return {"ok": True, "service": "lumi-core", "version": __version__}
 
 
+@app.get("/ready")
+def ready() -> dict:
+    ok, detail = database_maintenance.integrity_check()
+    if not ok:
+        raise HTTPException(status_code=503, detail=f"database_not_ready:{detail}")
+    return {"ok": True, "database": "ok", "version": __version__}
+
+
 @app.get("/v1/runtime")
 async def runtime_status() -> dict:
     return {
@@ -131,6 +156,19 @@ async def runtime_status() -> dict:
         "provider": "ollama",
         "model": settings.ollama_model,
         "active_generations": await generations.active_count(),
+        "security": {
+            "api_key_required": bool(settings.api_key),
+            "local_only_without_api_key": True,
+            "api_docs_enabled": settings.api_docs_enabled,
+            "trusted_hosts": list(settings.trusted_hosts),
+            "cors_enabled": bool(settings.cors_origins),
+        },
+        "storage": {
+            "database": str(database.path),
+            "backup_dir": str(settings.backup_dir),
+            "backup_before_migrate": settings.backup_before_migrate,
+            "backup_keep": settings.backup_keep,
+        },
         "rag": {
             "sparse": "sqlite-fts5",
             "dense_enabled": settings.rag_dense_enabled,
@@ -151,6 +189,16 @@ async def runtime_status() -> dict:
             "critical_enabled": False,
         },
     }
+
+
+@app.post("/v1/admin/backup")
+def create_database_backup() -> dict:
+    try:
+        path = database_maintenance.create_backup(settings.backup_dir)
+        removed = database_maintenance.prune_backups(settings.backup_dir, keep=settings.backup_keep)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"backup_failed:{type(exc).__name__}") from exc
+    return {"ok": True, "backup": str(path), "pruned": len(removed)}
 
 
 @app.post("/v1/chat", response_model=ChatResponse)

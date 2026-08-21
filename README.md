@@ -1,167 +1,102 @@
-# Lumi V4 — Foundation + M1 + M2 + M3 + M4 + M5
+# Lumi V4 RC1
 
-Lumi V4 is a ground-up redesign of Lumi as a local-first AI assistant platform rather than a single chat class. The current branch is a modular monolith: one Python core service, durable SQLite state, grounded RAG, policy-gated tools, token-budget context management, explicit durable memory, an approval-gated Developer Agent, and a native SwiftUI client.
+Lumi is a local-first AI assistant platform for macOS. V4 is a ground-up redesign with a native SwiftUI client and a Python Core that owns orchestration, durable state, retrieval, memory, policy-gated tools and the Developer Agent.
 
-## Working architecture
+## Current release-candidate architecture
 
 ```text
-macOS SwiftUI client
-        │
-        │ HTTP + SSE + document upload + approvals + memory CRUD
+SwiftUI macOS client
+        │  HTTP / SSE / approvals / uploads
         ▼
-Lumi Core (Python)
-  ├─ API + generation registry
-  ├─ Chat runtime
-  │   ├─ token-budget ContextManager
-  │   ├─ compact conversation summaries
-  │   ├─ durable-memory recall
-  │   └─ grounded RAG context
-  ├─ Bounded task runtime
-  │   ├─ LLM planner
-  │   ├─ ToolRegistry
-  │   ├─ PolicyEngine
-  │   ├─ step/time/tool budgets
-  │   └─ durable audit log
-  ├─ Developer runtime
-  │   ├─ separate Git checkout inspection
-  │   ├─ strict typed proposal
-  │   ├─ exact diff review
-  │   ├─ approval-gated branch/apply/validation
-  │   └─ second approval → commit/push/draft PR
-  ├─ Model gateway
-  ├─ RAG
-  │   ├─ PDF / Markdown / Text ingestion
-  │   ├─ SQLite FTS5 sparse retrieval
-  │   ├─ Ollama dense embeddings
-  │   ├─ weighted RRF fusion
-  │   ├─ optional cached CrossEncoder reranker
-  │   └─ structured citations
-  ├─ Memory
-  │   ├─ explicit approved records
-  │   ├─ SQLite FTS5 recall
-  │   ├─ optional local embeddings
-  │   ├─ weighted RRF fusion
-  │   └─ inspect/edit/delete UI
-  └─ SQLite storage + migrations
-        │
-        ├─ SQLite canonical state
-        ├─ sandboxed Lumi workspace
-        ├─ separate developer checkout
-        └─ Ollama-compatible local models
+Lumi Core (FastAPI)
+  ├─ streaming chat + cancellation
+  ├─ token-budget context manager
+  ├─ grounded RAG: FTS5 + optional embeddings + RRF + citations
+  ├─ explicit durable memory + multilingual retrieval
+  ├─ bounded agent runtime + ToolRegistry + PolicyEngine
+  ├─ approval-gated Developer Agent
+  ├─ SQLite canonical state + migrations + backup/recovery
+  └─ Ollama-compatible local model gateway
 ```
 
-## What works now
+## Safety model
 
-- FastAPI health/runtime/chat/stream/knowledge/task/tool/memory/developer APIs.
-- Real SSE generation with explicit cancellation.
-- Native SwiftUI client with streaming chat, grounded citations, memory management, agent controls, and approval UX.
-- Durable conversations/messages/tasks/tool calls with status and audit metadata.
-- Recent conversation context is bounded by estimated tokens, not raw message count.
-- Older dialogue can be compacted into a persisted summary; a deterministic extractive fallback is used if the local model cannot summarize.
-- Durable memory is created only through an explicit user-approved action and is inspectable, editable, and hard-deletable.
-- Memory recall uses SQLite FTS5 plus optional local embeddings with weighted Reciprocal Rank Fusion.
-- Recalled memory is shown separately from document citations in the macOS client.
-- PDF, Markdown and text knowledge import with hash deduplication and deterministic chunk IDs.
-- SQLite FTS5 sparse RAG retrieval plus optional Ollama dense embeddings.
-- Weighted Reciprocal Rank Fusion and optional lazy CrossEncoder reranking.
-- Typed tool registry with strict JSON argument schemas and per-tool timeouts.
-- Sandboxed `workspace.list_files`, `workspace.read_text`, `workspace.search_text`, and `knowledge.search` tools.
-- `workspace.write_text` is high-risk and cannot execute until the user approves the exact proposed arguments.
-- Absolute paths and workspace escapes are rejected; shell/delete tools are not exposed.
-- Task execution is bounded by step, tool-call, and wall-clock budgets.
-- Developer Agent inspects a separate clean Git checkout and produces a strict bounded file proposal before any mutation.
-- Developer file changes are limited to UTF-8 `create`/`replace`; `.git`, delete, arbitrary shell, arbitrary HTTP, absolute paths, traversal, and symlink escape are rejected.
-- The exact proposed diff is shown before approval.
-- Local developer validation uses fixed allow-listed profiles only and is disabled by default because tests execute repository code.
-- If required checks are disabled, skipped, or fail, the developer session cannot be published.
-- Commit/push/draft-PR publication requires a second explicit approval, and Lumi never auto-merges.
-- Developer workflow state, diff, validation, branch, commit, PR URL, and events are persisted for audit; GitHub credentials are not.
-- Tool outputs, repository content, retrieved documents, summaries, and recalled memory have explicit trust boundaries.
-- Deterministic RAG and memory retrieval regression gates run in CI.
-- Python unit/API/security/developer tests on Linux/macOS plus Swift build/tests in CI.
+- local loopback access by default;
+- remote/LAN access requires an explicit strong API key;
+- untrusted documents, tool output and repository content are never treated as system instructions;
+- write tools require approval;
+- Developer Agent uses a separate checkout, two explicit approval stages and draft PRs only;
+- no runtime self-modification, unrestricted shell, delete tool, arbitrary network executor or automatic merge;
+- durable memory is explicit, inspectable, editable and deletable.
 
-## Run Lumi Core
+## Install on macOS
+
+Requirements: macOS 13+, Python 3.11+ and Swift 5.9+. Ollama is optional for fallback operation and required for real generated answers.
 
 ```bash
-python3 -m venv .venv
+git clone https://github.com/Baterzhop/LumiOrigin.git
+cd LumiOrigin
+git checkout lumi-v4-release
+bash scripts/install_lumi.sh
+bash scripts/start_lumi.sh
+```
+
+The installer creates `.venv`, installs the Core, initializes the verified SQLite state and builds an ad-hoc signed `dist/Lumi.app`.
+
+## Operations
+
+```bash
 source .venv/bin/activate
-python -m pip install -e "services/core[dev]"
-uvicorn lumi_core.api.main:app --reload --port 8790
+lumi-core doctor
+lumi-core migrate
+lumi-core backup --full
+lumi-core restore /path/to/backup.sqlite3 --yes --full
+lumi-core serve
 ```
 
-Optional local models:
+For a real local-model acceptance test:
 
 ```bash
-export LUMI_OLLAMA_URL=http://127.0.0.1:11434/api/chat
-export LUMI_OLLAMA_MODEL=llama3.2
-export LUMI_OLLAMA_EMBED_URL=http://127.0.0.1:11434/api/embed
-export LUMI_EMBEDDING_MODEL=embeddinggemma
+python scripts/acceptance_local.py --require-model
 ```
 
-Context and memory controls:
+## Knowledge
+
+Lumi currently ingests PDF, Markdown and text files. Retrieval combines SQLite FTS5/BM25 with optional Ollama embeddings through weighted reciprocal-rank fusion and can optionally use a CrossEncoder reranker. Responses carry document/chunk/page citations. Scanned-PDF OCR remains outside RC1.
+
+## Memory
+
+Conversation input is token-budgeted. Older dialogue can be compacted into persisted summaries. Durable memory is created only from an explicit approved user action and is retrievable through FTS5 plus optional embeddings. Regression datasets now include English, Ukrainian, German and Hungarian plumbing cases.
+
+## Agent tools
+
+Read/list/search tools are sandboxed. `workspace.write_text` requires explicit approval of the exact arguments. Task execution has step, tool-call and wall-clock budgets. Shell, delete and arbitrary HTTP executors are not exposed.
+
+## Developer Agent
+
+Developer mode operates only on a separate clean checkout/worktree. It inspects read-only state, proposes typed UTF-8 create/replace operations, renders an exact diff, waits for approval, applies changes on an isolated `lumi/dev-*` branch and runs only fixed validation profiles. A second approval is required before commit/push/draft-PR publication. Lumi never auto-merges.
+
+## Security and recovery
+
+Hardened configuration rejects weak API keys, wildcard CORS and unsafe network settings. API/GitHub secrets are not represented in settings logs. Every existing SQLite database is backed up before migration by default, backups are verified, `/ready` checks database integrity, and restore performs source/temp/final integrity checks plus a pre-restore safety backup.
+
+## Verification
+
+The release gate covers:
+
+- Ubuntu/macOS Python install + dependency checks;
+- full unit/API/security/RAG/memory/tools/Developer-Agent tests;
+- multilingual deterministic RAG/memory regressions;
+- fallback HTTP/SSE live acceptance;
+- primary-model + dense-embedding HTTP/SSE acceptance against an Ollama-compatible deterministic CI server;
+- Python wheel/sdist build;
+- Swift build/tests;
+- macOS `.app` packaging, plist validation and code-sign verification.
+
+The final target-machine gate is intentionally separate because GitHub cannot access the user's installed Ollama models:
 
 ```bash
-export LUMI_CONTEXT_MAX_INPUT_TOKENS=6000
-export LUMI_CONTEXT_RECENT_TOKENS=3500
-export LUMI_CONTEXT_SUMMARY_TOKENS=800
-export LUMI_MEMORY_RECALL_K=4
+python scripts/acceptance_local.py --require-model
 ```
 
-Tool workspace defaults to `.lumi-data/workspace`. Override it explicitly if needed:
-
-```bash
-export LUMI_TOOL_WORKSPACE="$HOME/LumiWorkspace"
-```
-
-Developer Agent is disabled until a **separate Git checkout/worktree** is configured:
-
-```bash
-export LUMI_DEV_REPO_ROOT="$HOME/Projects/Lumi-dev-worktree"
-export LUMI_DEV_BASE_BRANCH=main
-```
-
-Local developer validation is intentionally disabled by default. Enable it only when you are willing to execute the repository's fixed validation profiles after reviewing the proposed code change:
-
-```bash
-export LUMI_DEV_ALLOW_LOCAL_CHECKS=true
-```
-
-When required checks cannot run, Lumi uses `validation_incomplete` and blocks publish rather than treating skipped validation as success.
-
-Optional GitHub draft-PR publishing:
-
-```bash
-export LUMI_DEV_GITHUB_REPOSITORY="owner/repository"
-export LUMI_DEV_GITHUB_TOKEN="..."
-```
-
-The GitHub token is read from the environment only; Lumi does not persist or return it. The Developer Agent refuses to target the running Lumi source checkout and never auto-merges a PR.
-
-The autonomous task and developer planners require a working chat model. If Ollama is unavailable, ordinary chat can fall back, but planning fails closed rather than inventing tool calls or code changes.
-
-To enable the optional CrossEncoder reranker:
-
-```bash
-python -m pip install -e "services/core[rerank]"
-export LUMI_RERANKER_MODEL=<cross-encoder-model>
-```
-
-## Run macOS client
-
-```bash
-cd apps/macos
-swift run LumiDesktop
-```
-
-Or open `apps/macos/Package.swift` in Xcode. The Developer Agent review window is available from the **Developer** menu (`⇧⌘D`).
-
-## Test
-
-```bash
-pytest services/core/tests
-python scripts/eval_rag.py --assert-thresholds
-python scripts/eval_memory.py --assert-thresholds
-cd apps/macos && swift test
-```
-
-See `docs/architecture.md`, `docs/event-protocol.md`, `docs/rag.md`, `docs/tools.md`, `docs/memory.md`, and `docs/developer-agent.md` for design contracts and current limitations.
+See `docs/architecture.md`, `docs/hardening.md`, `docs/release.md` and `RELEASE_CHECKLIST.md` for design, security and release contracts.

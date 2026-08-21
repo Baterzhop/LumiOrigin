@@ -19,26 +19,34 @@ public struct LumiAPIClient: Sendable {
     }
 
     public let baseURL: URL
+    public let apiKey: String?
 
-    public init(baseURL: URL = URL(string: "http://127.0.0.1:8790")!) {
+    public init(baseURL: URL = URL(string: "http://127.0.0.1:8790")!, apiKey: String? = nil) {
         self.baseURL = baseURL
+        if let apiKey, !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            let environmentKey = ProcessInfo.processInfo.environment["LUMI_API_KEY"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            self.apiKey = environmentKey?.isEmpty == false ? environmentKey : nil
+        }
     }
 
     public func health() async throws -> HealthResponse {
-        let (data, response) = try await URLSession.shared.data(from: endpoint("health"))
-        try validate(response)
+        let (data, response) = try await URLSession.shared.data(for: makeRequest(endpoint("health")))
+        try validateResponse(response)
         return try JSONDecoder().decode(HealthResponse.self, from: data)
     }
 
     public func runtimeStatus() async throws -> RuntimeStatusResponse {
-        let (data, response) = try await URLSession.shared.data(from: endpoint("v1", "runtime"))
-        try validate(response)
+        let (data, response) = try await URLSession.shared.data(for: makeRequest(endpoint("v1", "runtime")))
+        try validateResponse(response)
         return try JSONDecoder().decode(RuntimeStatusResponse.self, from: data)
     }
 
     public func knowledgeDocuments() async throws -> [KnowledgeDocumentDTO] {
-        let (data, response) = try await URLSession.shared.data(from: endpoint("v1", "knowledge", "documents"))
-        try validate(response)
+        let (data, response) = try await URLSession.shared.data(for: makeRequest(endpoint("v1", "knowledge", "documents")))
+        try validateResponse(response)
         return try JSONDecoder().decode(KnowledgeDocumentsResponse.self, from: data).documents
     }
 
@@ -57,19 +65,18 @@ public struct LumiAPIClient: Sendable {
         body.append(fileData)
         append("\r\n--\(boundary)--\r\n")
 
-        var request = URLRequest(url: endpoint("v1", "knowledge", "upload"))
-        request.httpMethod = "POST"
+        var request = makeRequest(endpoint("v1", "knowledge", "upload"), method: "POST")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response)
+        try validateResponse(response)
         return try JSONDecoder().decode(KnowledgeUploadResponse.self, from: data)
     }
 
     public func memories() async throws -> [MemoryRecordDTO] {
-        let (data, response) = try await URLSession.shared.data(from: endpoint("v1", "memories"))
-        try validate(response)
+        let (data, response) = try await URLSession.shared.data(for: makeRequest(endpoint("v1", "memories")))
+        try validateResponse(response)
         return try JSONDecoder().decode(MemoriesResponse.self, from: data).memories
     }
 
@@ -96,10 +103,9 @@ public struct LumiAPIClient: Sendable {
     }
 
     public func deleteMemory(_ memoryID: String) async throws {
-        var request = URLRequest(url: endpoint("v1", "memories", memoryID))
-        request.httpMethod = "DELETE"
+        let request = makeRequest(endpoint("v1", "memories", memoryID), method: "DELETE")
         let (_, response) = try await URLSession.shared.data(for: request)
-        try validate(response)
+        try validateResponse(response)
     }
 
     public func createTask(
@@ -120,8 +126,8 @@ public struct LumiAPIClient: Sendable {
     }
 
     public func task(_ taskID: String) async throws -> AgentTaskDTO {
-        let (data, response) = try await URLSession.shared.data(from: endpoint("v1", "tasks", taskID))
-        try validate(response)
+        let (data, response) = try await URLSession.shared.data(for: makeRequest(endpoint("v1", "tasks", taskID)))
+        try validateResponse(response)
         return try JSONDecoder().decode(AgentTaskDTO.self, from: data)
     }
 
@@ -137,14 +143,12 @@ public struct LumiAPIClient: Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var request = URLRequest(url: endpoint("v1", "chat", "stream"))
-                    request.httpMethod = "POST"
+                    var request = makeRequest(endpoint("v1", "chat", "stream"), method: "POST", accept: "text/event-stream")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.httpBody = try JSONEncoder().encode(ChatRequestDTO(message: message, conversationID: conversationID))
 
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
-                    try validate(response)
+                    try validateResponse(response)
                     var dataLines: [String] = []
                     let decoder = JSONDecoder()
 
@@ -180,10 +184,26 @@ public struct LumiAPIClient: Sendable {
     }
 
     public func cancelGeneration(_ generationID: String) async throws {
-        var request = URLRequest(url: endpoint("v1", "generations", generationID, "cancel"))
-        request.httpMethod = "POST"
+        let request = makeRequest(endpoint("v1", "generations", generationID, "cancel"), method: "POST")
         let (_, response) = try await URLSession.shared.data(for: request)
-        try validate(response)
+        try validateResponse(response)
+    }
+
+    func makeRequest(_ url: URL, method: String = "GET", accept: String? = nil) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        if let apiKey {
+            request.setValue(apiKey, forHTTPHeaderField: "X-Lumi-Key")
+        }
+        if let accept {
+            request.setValue(accept, forHTTPHeaderField: "Accept")
+        }
+        return request
+    }
+
+    func validateResponse(_ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw ClientError.httpStatus(http.statusCode) }
     }
 
     private func postJSON<Body: Encodable, Response: Decodable>(
@@ -200,29 +220,22 @@ public struct LumiAPIClient: Sendable {
         body: Body,
         response: Response.Type
     ) async throws -> Response {
-        var request = URLRequest(url: url)
-        request.httpMethod = method
+        var request = makeRequest(url, method: method)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         let (data, urlResponse) = try await URLSession.shared.data(for: request)
-        try validate(urlResponse)
+        try validateResponse(urlResponse)
         return try JSONDecoder().decode(Response.self, from: data)
     }
 
     private func postEmpty<Response: Decodable>(_ url: URL, response: Response.Type) async throws -> Response {
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        let request = makeRequest(url, method: "POST")
         let (data, urlResponse) = try await URLSession.shared.data(for: request)
-        try validate(urlResponse)
+        try validateResponse(urlResponse)
         return try JSONDecoder().decode(Response.self, from: data)
     }
 
     private func endpoint(_ components: String...) -> URL {
         components.reduce(baseURL) { partial, component in partial.appendingPathComponent(component) }
-    }
-
-    private func validate(_ response: URLResponse) throws {
-        guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else { throw ClientError.httpStatus(http.statusCode) }
     }
 }
