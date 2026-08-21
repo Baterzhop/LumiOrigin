@@ -20,6 +20,9 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+      - name: Offline evaluation gate
+        if: matrix.os == 'ubuntu-latest'
+        run: swift run LumiOrigin --eval
       - name: CLI smoke test
         if: matrix.os == 'ubuntu-latest'
         run: swift run LumiOrigin
