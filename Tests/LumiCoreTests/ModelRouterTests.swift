@@ -62,6 +62,23 @@ final class ModelRouterTests: XCTestCase {
         XCTAssertEqual(ids, ["agent-model"])
     }
 
+    func testSpecializedFailureFallsBackToDefaultAndMarksRouteFallback() async throws {
+        let recorder = ModelRouteRecorder()
+        let router = ModelRouter(
+            defaultClient: RoutedTestClient(id: "chat-model", recorder: recorder),
+            routes: [.coding: FailingRouteClient()]
+        )
+
+        let response = try await router.complete(makeRequest(profile: "coding"))
+
+        XCTAssertEqual(response.content, "chat-model")
+        XCTAssertEqual(response.runtime.model, "chat-model")
+        XCTAssertEqual(response.runtime.modelRole, .coding)
+        XCTAssertTrue(response.runtime.fallbackUsed)
+        let ids = await recorder.ids()
+        XCTAssertEqual(ids, ["chat-model"])
+    }
+
     func testStreamingPreservesTokensAndAnnotatesCompletedRole() async throws {
         let recorder = ModelRouteRecorder()
         let router = ModelRouter(
@@ -86,6 +103,55 @@ final class ModelRouterTests: XCTestCase {
         XCTAssertEqual(completed?.content, "coding-model")
         XCTAssertEqual(completed?.runtime.model, "coding-model")
         XCTAssertEqual(completed?.runtime.modelRole, .coding)
+    }
+
+    func testStreamingFailureBeforeAnyTokenFallsBackToDefault() async throws {
+        let recorder = ModelRouteRecorder()
+        let router = ModelRouter(
+            defaultClient: RoutedTestClient(id: "chat-model", recorder: recorder),
+            routes: [.coding: FailingRouteClient()]
+        )
+
+        let stream = router.stream(makeRequest(profile: "coding"))
+        var tokens = ""
+        var completed: ModelResponse?
+        for try await event in stream {
+            switch event {
+            case .token(let token): tokens += token
+            case .completed(let response): completed = response
+            }
+        }
+
+        XCTAssertEqual(tokens, "chat-model")
+        XCTAssertEqual(completed?.runtime.model, "chat-model")
+        XCTAssertEqual(completed?.runtime.modelRole, .coding)
+        XCTAssertEqual(completed?.runtime.fallbackUsed, true)
+    }
+
+    func testStreamingDoesNotSwitchModelsAfterPartialOutput() async {
+        let recorder = ModelRouteRecorder()
+        let router = ModelRouter(
+            defaultClient: RoutedTestClient(id: "chat-model", recorder: recorder),
+            routes: [.coding: PartialFailingRouteClient()]
+        )
+
+        let stream = router.stream(makeRequest(profile: "coding"))
+        var tokens = ""
+        var caughtError = false
+        do {
+            for try await event in stream {
+                if case .token(let token) = event {
+                    tokens += token
+                }
+            }
+        } catch {
+            caughtError = true
+        }
+
+        XCTAssertEqual(tokens, "partial")
+        XCTAssertTrue(caughtError)
+        let ids = await recorder.ids()
+        XCTAssertTrue(ids.isEmpty)
     }
 
     private func makeRequest(
@@ -137,5 +203,24 @@ private struct RoutedTestClient: LLMClient {
                 usage: ModelUsage(inputTokens: 3, outputTokens: 1)
             )
         )
+    }
+}
+
+private struct FailingRouteClient: LLMClient {
+    func complete(_ request: ModelRequest) async throws -> ModelResponse {
+        throw LumiRuntimeError.modelUnavailable("specialized-test-model")
+    }
+}
+
+private struct PartialFailingRouteClient: LLMClient {
+    func complete(_ request: ModelRequest) async throws -> ModelResponse {
+        throw LumiRuntimeError.invalidResponse
+    }
+
+    func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.token("partial"))
+            continuation.finish(throwing: LumiRuntimeError.invalidResponse)
+        }
     }
 }
