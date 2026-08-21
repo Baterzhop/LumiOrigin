@@ -27,10 +27,12 @@ jobs:
           "${RUNNER_TEMP}/verify-wheel/bin/python" -m pip install -c services/core/requirements.lock services/core/dist/lumi_core-*.whl
           "${RUNNER_TEMP}/verify-wheel/bin/python" -m pip check
           "${RUNNER_TEMP}/verify-wheel/bin/lumi-core" version
+          "${RUNNER_TEMP}/verify-wheel/bin/lumi-core" acceptance --help >/dev/null
       - name: Generate Core checksums
         run: |
           cd services/core/dist
           sha256sum lumi_core-* > SHA256SUMS
+          sha256sum -c SHA256SUMS
           cat SHA256SUMS
       - name: Upload Core distribution
         uses: actions/upload-artifact@v4
@@ -43,24 +45,27 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Validate notarization entrypoint
+        run: bash -n scripts/notarize_macos_app.sh
       - name: Build and ad-hoc sign app bundle
         run: bash scripts/build_macos_app.sh
       - name: Verify package
         run: |
           plutil -lint dist/Lumi.app/Contents/Info.plist
           codesign --verify --deep --strict dist/Lumi.app
-          ls dist/Lumi-macOS-*.zip
+          test -f dist/Lumi-macOS-4.0.0rc5.zip
       - name: Generate macOS checksum
         run: |
           cd dist
-          ZIP="$(ls Lumi-macOS-*.zip | head -n 1)"
+          ZIP="Lumi-macOS-4.0.0rc5.zip"
           shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          shasum -a 256 -c "$ZIP.sha256"
           cat "$ZIP.sha256"
       - name: Upload macOS app
         uses: actions/upload-artifact@v4
         with:
           name: lumi-macos
           path: |
-            dist/Lumi-macOS-*.zip
-            dist/Lumi-macOS-*.zip.sha256
+            dist/Lumi-macOS-4.0.0rc5.zip
+            dist/Lumi-macOS-4.0.0rc5.zip.sha256
           if-no-files-found: error
