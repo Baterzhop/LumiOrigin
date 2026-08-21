@@ -1,6 +1,8 @@
 import Foundation
 
 public actor AgentRuntime {
+    private typealias EventSink = @Sendable (AgentEvent) -> Void
+
     private let planner: any AgentPlanning
     private let tools: ToolRuntime
     private let store: any AgentRunStoring
@@ -20,64 +22,81 @@ public actor AgentRuntime {
         classification: RequestClassification? = nil,
         budget: AgentBudget = AgentBudget()
     ) async throws -> AgentRun {
-        let cleanGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanGoal.isEmpty else { throw AgentRuntimeError.emptyGoal }
-
-        var run = AgentRun(
-            goal: cleanGoal,
+        try await startInternal(
+            goal: goal,
             classification: classification,
-            state: .created,
-            budget: budget
+            budget: budget,
+            eventSink: nil
         )
-        try await persist(run)
+    }
 
-        run = run.replacing(state: .planning)
-        try await persist(run)
-        return try await advance(run)
+    public func streamStart(
+        goal: String,
+        classification: RequestClassification? = nil,
+        budget: AgentBudget = AgentBudget()
+    ) -> AsyncThrowingStream<AgentEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    _ = try await self.startInternal(
+                        goal: goal,
+                        classification: classification,
+                        budget: budget,
+                        eventSink: { event in
+                            continuation.yield(event)
+                        }
+                    )
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
     }
 
     public func resume(
         runID: UUID,
         confirmation: ToolConfirmation
     ) async throws -> AgentRun {
-        guard var run = try await store.load(id: runID) else {
-            throw AgentRuntimeError.runNotFound
-        }
-        guard run.state == .waitingForConfirmation, let pending = run.pendingCall else {
-            throw AgentRuntimeError.invalidState("Run is not waiting for a tool confirmation.")
-        }
-        guard confirmation.callID == pending.id else {
-            throw AgentRuntimeError.confirmationMismatch
-        }
-        guard let lastIndex = run.steps.lastIndex(where: { $0.call.id == pending.id }) else {
-            throw AgentRuntimeError.invalidState("Pending call has no checkpointed agent step.")
-        }
-
-        run = run.replacing(state: .executing)
-        try await persist(run)
-
-        let result = await tools.execute(pending, confirmation: confirmation)
-        var steps = run.steps
-        steps[lastIndex] = steps[lastIndex].replacing(result: result)
-        run = run.replacing(
-            state: stateAfterToolResult(result),
-            steps: steps,
-            pendingCall: .some(result.status == .confirmationRequired ? pending : nil)
+        try await resumeInternal(
+            runID: runID,
+            confirmation: confirmation,
+            eventSink: nil
         )
-        try await persist(run)
+    }
 
-        if result.status == .confirmationRequired {
-            return run
-        }
-        if result.status == .cancelled {
-            let cancelled = run.replacing(state: .cancelled, pendingCall: .some(nil))
-            try await persist(cancelled)
-            return cancelled
-        }
+    public func streamResume(
+        runID: UUID,
+        confirmation: ToolConfirmation
+    ) -> AsyncThrowingStream<AgentEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    _ = try await self.resumeInternal(
+                        runID: runID,
+                        confirmation: confirmation,
+                        eventSink: { event in
+                            continuation.yield(event)
+                        }
+                    )
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
 
-        run = run.replacing(state: .replanning, pendingCall: .some(nil))
-        try await persist(run)
-        return try await advance(run)
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
     }
 
     public func load(runID: UUID) async throws -> AgentRun? {
@@ -97,18 +116,94 @@ public actor AgentRuntime {
             pendingCall: .some(nil),
             error: .some(nil)
         )
-        try await persist(cancelled)
+        try await persist(cancelled, eventSink: nil)
         return cancelled
     }
 
-    private func advance(_ initialRun: AgentRun) async throws -> AgentRun {
+    private func startInternal(
+        goal: String,
+        classification: RequestClassification?,
+        budget: AgentBudget,
+        eventSink: EventSink?
+    ) async throws -> AgentRun {
+        let cleanGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanGoal.isEmpty else { throw AgentRuntimeError.emptyGoal }
+
+        var run = AgentRun(
+            goal: cleanGoal,
+            classification: classification,
+            state: .created,
+            budget: budget
+        )
+        try await persist(run, eventSink: eventSink)
+
+        run = run.replacing(state: .planning)
+        try await persist(run, eventSink: eventSink)
+        return try await advance(run, eventSink: eventSink)
+    }
+
+    private func resumeInternal(
+        runID: UUID,
+        confirmation: ToolConfirmation,
+        eventSink: EventSink?
+    ) async throws -> AgentRun {
+        guard var run = try await store.load(id: runID) else {
+            throw AgentRuntimeError.runNotFound
+        }
+        guard run.state == .waitingForConfirmation, let pending = run.pendingCall else {
+            throw AgentRuntimeError.invalidState("Run is not waiting for a tool confirmation.")
+        }
+        guard confirmation.callID == pending.id else {
+            throw AgentRuntimeError.confirmationMismatch
+        }
+        guard let lastIndex = run.steps.lastIndex(where: { $0.call.id == pending.id }) else {
+            throw AgentRuntimeError.invalidState("Pending call has no checkpointed agent step.")
+        }
+
+        eventSink?(.runUpdated(run))
+
+        run = run.replacing(state: .executing)
+        try await persist(run, eventSink: eventSink)
+        eventSink?(.toolStarted(runID: run.id, call: pending))
+
+        let result = await tools.execute(pending, confirmation: confirmation)
+        eventSink?(.toolFinished(runID: run.id, result: result))
+
+        var steps = run.steps
+        steps[lastIndex] = steps[lastIndex].replacing(result: result)
+        run = run.replacing(
+            state: stateAfterToolResult(result),
+            steps: steps,
+            pendingCall: .some(result.status == .confirmationRequired ? pending : nil)
+        )
+        try await persist(run, eventSink: eventSink)
+
+        if result.status == .confirmationRequired {
+            eventSink?(.confirmationRequired(runID: run.id, call: pending))
+            return run
+        }
+        if result.status == .cancelled {
+            let cancelled = run.replacing(state: .cancelled, pendingCall: .some(nil))
+            try await persist(cancelled, eventSink: eventSink)
+            return cancelled
+        }
+
+        run = run.replacing(state: .replanning, pendingCall: .some(nil))
+        try await persist(run, eventSink: eventSink)
+        return try await advance(run, eventSink: eventSink)
+    }
+
+    private func advance(
+        _ initialRun: AgentRun,
+        eventSink: EventSink?
+    ) async throws -> AgentRun {
         var run = initialRun
         let activeCycleStartedAt = Date()
 
         while true {
             if Task.isCancelled {
                 let cancelled = run.replacing(state: .cancelled, pendingCall: .some(nil))
-                try? await persist(cancelled)
+                try? await persist(cancelled, eventSink: eventSink)
                 return cancelled
             }
 
@@ -118,7 +213,7 @@ public actor AgentRuntime {
                     pendingCall: .some(nil),
                     error: .some("Agent active-duration budget exceeded.")
                 )
-                try await persist(exceeded)
+                try await persist(exceeded, eventSink: eventSink)
                 return exceeded
             }
 
@@ -127,7 +222,7 @@ public actor AgentRuntime {
             // another tool call.
             let planningState: AgentRunState = run.steps.isEmpty ? .planning : .replanning
             run = run.replacing(state: planningState, pendingCall: .some(nil))
-            try await persist(run)
+            try await persist(run, eventSink: eventSink)
 
             let toolsAvailable = await tools.availableTools()
             let decision: AgentDecision
@@ -137,7 +232,7 @@ public actor AgentRuntime {
                 )
             } catch is CancellationError {
                 let cancelled = run.replacing(state: .cancelled, pendingCall: .some(nil))
-                try? await persist(cancelled)
+                try? await persist(cancelled, eventSink: eventSink)
                 return cancelled
             } catch {
                 let failed = run.replacing(
@@ -145,7 +240,7 @@ public actor AgentRuntime {
                     pendingCall: .some(nil),
                     error: .some(error.localizedDescription)
                 )
-                try await persist(failed)
+                try await persist(failed, eventSink: eventSink)
                 return failed
             }
 
@@ -157,7 +252,7 @@ public actor AgentRuntime {
                         state: .failed,
                         error: .some("Planner returned an empty final answer.")
                     )
-                    try await persist(failed)
+                    try await persist(failed, eventSink: eventSink)
                     return failed
                 }
 
@@ -167,7 +262,7 @@ public actor AgentRuntime {
                     finalAnswer: .some(cleanAnswer),
                     error: .some(nil)
                 )
-                try await persist(completed)
+                try await persist(completed, eventSink: eventSink)
                 return completed
 
             case .tool(let name, let arguments, let note):
@@ -178,7 +273,7 @@ public actor AgentRuntime {
                         pendingCall: .some(nil),
                         error: .some("Agent step/tool-call budget exceeded before another tool execution.")
                     )
-                    try await persist(exceeded)
+                    try await persist(exceeded, eventSink: eventSink)
                     return exceeded
                 }
 
@@ -189,9 +284,12 @@ public actor AgentRuntime {
                 )
                 let startedAt = Date()
                 run = run.replacing(state: .executing, pendingCall: .some(call))
-                try await persist(run)
+                try await persist(run, eventSink: eventSink)
+                eventSink?(.toolStarted(runID: run.id, call: call))
 
                 let result = await tools.execute(call)
+                eventSink?(.toolFinished(runID: run.id, result: result))
+
                 let step = AgentStep(
                     index: run.steps.count + 1,
                     call: call,
@@ -208,7 +306,8 @@ public actor AgentRuntime {
                         pendingCall: .some(call),
                         error: .some(nil)
                     )
-                    try await persist(waiting)
+                    try await persist(waiting, eventSink: eventSink)
+                    eventSink?(.confirmationRequired(runID: waiting.id, call: call))
                     return waiting
                 }
 
@@ -218,7 +317,7 @@ public actor AgentRuntime {
                         steps: steps,
                         pendingCall: .some(nil)
                     )
-                    try await persist(cancelled)
+                    try await persist(cancelled, eventSink: eventSink)
                     return cancelled
                 }
 
@@ -228,7 +327,7 @@ public actor AgentRuntime {
                     pendingCall: .some(nil),
                     error: .some(nil)
                 )
-                try await persist(run)
+                try await persist(run, eventSink: eventSink)
             }
         }
     }
@@ -241,11 +340,28 @@ public actor AgentRuntime {
         }
     }
 
-    private func persist(_ run: AgentRun) async throws {
+    private func persist(
+        _ run: AgentRun,
+        eventSink: EventSink?
+    ) async throws {
         do {
             try await store.save(run)
         } catch {
             throw AgentRuntimeError.persistenceFailed(error.localizedDescription)
+        }
+
+        eventSink?(.runUpdated(run))
+        if isTerminal(run.state) {
+            eventSink?(.terminal(run))
+        }
+    }
+
+    private func isTerminal(_ state: AgentRunState) -> Bool {
+        switch state {
+        case .completed, .failed, .cancelled, .budgetExceeded:
+            return true
+        case .created, .planning, .executing, .waitingForConfirmation, .observing, .replanning:
+            return false
         }
     }
 }
