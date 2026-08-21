@@ -23,10 +23,11 @@ public struct LumiAPIClient: Sendable {
 
     public init(baseURL: URL? = nil, apiKey: String? = nil) {
         self.baseURL = baseURL ?? LumiClientConfiguration.baseURL()
+        let environmentKey = ProcessInfo.processInfo.environment["LUMI_API_KEY"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if let apiKey, !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if let environmentKey = ProcessInfo.processInfo.environment["LUMI_API_KEY"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !environmentKey.isEmpty {
+        } else if let environmentKey, !environmentKey.isEmpty {
             self.apiKey = environmentKey
         } else {
             self.apiKey = try? LumiClientConfiguration.storedAPIKey()
