@@ -2,8 +2,9 @@ import Foundation
 
 public extension LumiEngine {
     /// Production-style local default: conversation history, long-term memory, sparse knowledge,
-    /// vectors, tool audit events and agent checkpoints share one SQLite file through separate typed stores.
-    /// ToolRuntime exposes only sandboxed read-only workspace tools; AgentRuntime remains explicit.
+    /// vectors, tool audit events, agent checkpoints and metadata-only runtime traces share one
+    /// SQLite file through separate typed stores. ToolRuntime exposes only sandboxed read-only
+    /// workspace tools; AgentRuntime remains explicit.
     static func persistentDefault() -> LumiEngine {
         let databaseURL = SQLiteConversationStore.defaultDatabaseURL()
         let llm = ModelRouter.localOllamaDefault()
@@ -17,6 +18,9 @@ public extension LumiEngine {
         let memoryRuntime = MemoryRuntime(
             repository: SQLiteMemoryRepository(databaseURL: databaseURL),
             writePolicy: .explicitOnly
+        )
+        let telemetry = RuntimeTelemetry(
+            store: SQLiteRuntimeTraceStore(databaseURL: databaseURL)
         )
 
         let workspaceURL = defaultWorkspaceURL(databaseURL: databaseURL)
@@ -49,7 +53,8 @@ public extension LumiEngine {
             knowledge: hybrid,
             conversationStore: SQLiteConversationStore(databaseURL: databaseURL),
             toolRuntime: toolRuntime,
-            agentRuntime: agentRuntime
+            agentRuntime: agentRuntime,
+            telemetry: telemetry
         )
     }
 
