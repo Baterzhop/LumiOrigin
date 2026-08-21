@@ -33,6 +33,7 @@ final class ChatViewModel: ObservableObject {
     @Published var recentAgentRuns: [AgentRun] = []
     @Published var isAgentRunning = false
     @Published var agentError: String?
+    @Published var agentActivity: String?
 
     let profiles = ["auto", "chat", "knowledge", "coding", "reflection"]
     private let engine: LumiEngine
@@ -114,13 +115,20 @@ final class ChatViewModel: ObservableObject {
         guard !goal.isEmpty, !isAgentRunning, !isSending else { return }
 
         agentError = nil
+        agentActivity = "Starting agent"
         isAgentRunning = true
         status = "Agent running"
         agentTask?.cancel()
 
         agentTask = Task {
             do {
-                let run = try await engine.startAgent(goal: goal)
+                guard let agentRuntime = await engine.agentRuntime else {
+                    throw AgentRuntimeError.invalidState("AgentRuntime is not configured for this LumiEngine.")
+                }
+                let events = await agentRuntime.events()
+                let run = try await executeAgentOperation(observing: events) {
+                    try await self.engine.startAgent(goal: goal)
+                }
                 applyAgentRun(run)
                 if run.state == .completed {
                     agentGoal = ""
@@ -129,10 +137,12 @@ final class ChatViewModel: ObservableObject {
             } catch is CancellationError {
                 agentError = "Agent operation was cancelled."
                 status = "Agent cancelled"
+                agentActivity = nil
                 refreshAgentRuns()
             } catch {
                 agentError = error.localizedDescription
                 status = "Agent error"
+                agentActivity = nil
             }
 
             isAgentRunning = false
@@ -152,6 +162,7 @@ final class ChatViewModel: ObservableObject {
         if isAgentRunning {
             agentTask?.cancel()
             status = "Agent stopping"
+            agentActivity = "Cancelling active run"
             return
         }
 
@@ -160,6 +171,7 @@ final class ChatViewModel: ObservableObject {
             do {
                 let cancelled = try await engine.cancelAgent(runID: run.id)
                 applyAgentRun(cancelled)
+                agentActivity = nil
                 refreshAgentRuns()
             } catch {
                 agentError = error.localizedDescription
@@ -173,6 +185,7 @@ final class ChatViewModel: ObservableObject {
     func selectAgentRun(_ run: AgentRun) {
         activeAgentRun = run
         agentError = run.error
+        agentActivity = nil
         applyAgentStatus(run.state)
     }
 
@@ -287,29 +300,111 @@ final class ChatViewModel: ObservableObject {
               let pending = run.pendingCall else { return }
 
         agentError = nil
+        agentActivity = approved ? "Applying approved tool call" : "Recording rejected tool call"
         isAgentRunning = true
         status = approved ? "Agent resuming" : "Agent observing rejection"
         agentTask?.cancel()
 
         agentTask = Task {
             do {
-                let resumed = try await engine.resumeAgent(
-                    runID: run.id,
-                    confirmation: ToolConfirmation(callID: pending.id, approved: approved)
-                )
+                guard let agentRuntime = await engine.agentRuntime else {
+                    throw AgentRuntimeError.invalidState("AgentRuntime is not configured for this LumiEngine.")
+                }
+                let events = await agentRuntime.events()
+                let resumed = try await executeAgentOperation(observing: events) {
+                    try await self.engine.resumeAgent(
+                        runID: run.id,
+                        confirmation: ToolConfirmation(callID: pending.id, approved: approved)
+                    )
+                }
                 applyAgentRun(resumed)
                 refreshAgentRuns()
             } catch is CancellationError {
                 agentError = "Agent operation was cancelled."
                 status = "Agent cancelled"
+                agentActivity = nil
                 refreshAgentRuns()
             } catch {
                 agentError = error.localizedDescription
                 status = "Agent error"
+                agentActivity = nil
             }
 
             isAgentRunning = false
             agentTask = nil
+        }
+    }
+
+    private func executeAgentOperation(
+        observing events: AsyncStream<AgentEvent>,
+        operation: @escaping @Sendable () async throws -> AgentRun
+    ) async throws -> AgentRun {
+        var operationResult: AgentRun?
+
+        try await withThrowingTaskGroup(of: AgentOperationSignal.self) { group in
+            group.addTask {
+                .operation(try await operation())
+            }
+
+            group.addTask { [weak self] in
+                for await event in events {
+                    try Task.checkCancellation()
+                    await self?.applyAgentEvent(event)
+
+                    switch event {
+                    case .terminal, .confirmationRequired, .runtimeFailure:
+                        return .observerFinished
+                    case .runUpdated, .toolStarted, .toolFinished:
+                        continue
+                    }
+                }
+                return .observerFinished
+            }
+
+            while let signal = try await group.next() {
+                switch signal {
+                case .operation(let run):
+                    operationResult = run
+                    group.cancelAll()
+                    return
+                case .observerFinished:
+                    continue
+                }
+            }
+        }
+
+        guard let operationResult else {
+            throw AgentRuntimeError.invalidState("Agent operation finished without a run result.")
+        }
+        return operationResult
+    }
+
+    private func applyAgentEvent(_ event: AgentEvent) {
+        switch event {
+        case .runUpdated(let run):
+            applyAgentRun(run)
+            agentActivity = activity(for: run.state)
+
+        case .toolStarted(_, let call):
+            agentActivity = "Running \(call.toolName)"
+            status = "Agent executing tool"
+
+        case .toolFinished(_, let result):
+            agentActivity = "\(result.toolName): \(result.status.rawValue)"
+            status = "Agent observing"
+
+        case .confirmationRequired(_, let call):
+            agentActivity = "Waiting for approval: \(call.toolName)"
+            status = "Agent needs approval"
+
+        case .terminal(let run):
+            applyAgentRun(run)
+            agentActivity = nil
+
+        case .runtimeFailure(_, let message):
+            agentError = message
+            agentActivity = nil
+            status = "Agent error"
         }
     }
 
@@ -333,6 +428,18 @@ final class ChatViewModel: ObservableObject {
             status = "Agent cancelled"
         case .budgetExceeded:
             status = "Agent budget exceeded"
+        }
+    }
+
+    private func activity(for state: AgentRunState) -> String? {
+        switch state {
+        case .created: return "Creating run"
+        case .planning: return "Planning"
+        case .executing: return "Preparing tool execution"
+        case .waitingForConfirmation: return "Waiting for approval"
+        case .observing: return "Observing tool result"
+        case .replanning: return "Replanning"
+        case .completed, .failed, .cancelled, .budgetExceeded: return nil
         }
     }
 
@@ -367,5 +474,10 @@ final class ChatViewModel: ObservableObject {
         case .unknown: status = "Model error"
         }
     }
+}
+
+private enum AgentOperationSignal: Sendable {
+    case operation(AgentRun)
+    case observerFinished
 }
 #endif
