@@ -8,7 +8,7 @@ public struct TaskID: RawRepresentable, Hashable, Codable, Sendable, CustomStrin
     public var description: String { rawValue.uuidString.lowercased() }
 }
 
-public enum TaskState: String, Codable, CaseIterable, Sendable {
+public enum TaskState: String, Codable, CaseIterable, Hashable, Sendable {
     case draft
     case ready
     case running
