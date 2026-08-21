@@ -160,6 +160,7 @@ final class DelimitedSpreadsheetTests: XCTestCase {
         XCTAssertEqual(input.maxRows, SpreadsheetInspectInput.defaultMaxRows)
         XCTAssertEqual(input.maxColumns, SpreadsheetInspectInput.defaultMaxColumns)
         XCTAssertEqual(input.previewRows, SpreadsheetInspectInput.defaultPreviewRows)
+        XCTAssertNil(input.range)
     }
 
     func testInspectToolUsesOpaqueResourcePermissionAndReturnsBoundedPreview() async throws {
@@ -203,6 +204,52 @@ final class DelimitedSpreadsheetTests: XCTestCase {
         XCTAssertEqual(output.preview.count, 2)
         XCTAssertTrue(output.previewTruncated)
         XCTAssertEqual(output.preview[0].values, ["A", "1"])
+        XCTAssertNil(output.selectedSourceRangeIdentity)
+    }
+
+    func testInspectToolSelectsExplicitBounded2DSourceRange() async throws {
+        let broker = TestUserFileBroker()
+        let resourceID = broker.register(
+            content: "name,city,score,note\nA,Berlin,10,x\nB,Hamburg,20,y\nC,Cologne,30,z\nD,Bonn,40,w\n",
+            displayName: "range.csv"
+        )
+        let permissions = PermissionEngine()
+        let runtime = ToolRuntime(
+            registry: try ToolRegistry(tools: [AnyTool(SpreadsheetInspectTool(broker: broker))]),
+            permissions: permissions
+        )
+        let call = try ToolCall.encoding(
+            name: "spreadsheet.inspect",
+            version: "1",
+            input: SpreadsheetInspectInput(
+                resourceID: resourceID,
+                previewRows: 10,
+                range: SpreadsheetInspectRange(
+                    rowStart: 2,
+                    rowEnd: 3,
+                    columnStart: 2,
+                    columnEnd: 3
+                )
+            )
+        )
+
+        guard case .permissionRequired(let request) = try await runtime.execute(call) else {
+            return XCTFail("Range inspection still requires exact source permission")
+        }
+        _ = await runtime.grant(request, duration: .once)
+        guard case .success(let success) = try await runtime.execute(call) else {
+            return XCTFail("Approved range inspection should execute")
+        }
+
+        let output = try JSONDecoder().decode(
+            SpreadsheetInspectOutput.self,
+            from: JSONEncoder().encode(success.data)
+        )
+        XCTAssertEqual(output.rowCount, 2)
+        XCTAssertEqual(output.columnCount, 2)
+        XCTAssertEqual(output.columns.map(\.name), ["city", "score"])
+        XCTAssertEqual(output.preview.map(\.values), [["Hamburg", "20"], ["Cologne", "30"]])
+        XCTAssertEqual(output.selectedSourceRangeIdentity, "table:0:r2-3:c2-3")
     }
 
     func testUnknownOpaqueResourceFailsBeforePermissionPrompt() async throws {
