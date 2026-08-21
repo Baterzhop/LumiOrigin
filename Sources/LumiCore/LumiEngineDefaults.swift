@@ -8,13 +8,7 @@ public extension LumiEngine {
     static func persistentDefault() -> LumiEngine {
         let databaseURL = SQLiteConversationStore.defaultDatabaseURL()
         let llm = ModelRouter.localOllamaDefault()
-        let sparse = SQLiteKnowledgeStore(databaseURL: databaseURL)
-        let vectors = SQLiteVectorIndex(databaseURL: databaseURL)
-        let hybrid = HybridKnowledgeLibrary(
-            sparse: sparse,
-            vectors: vectors,
-            embeddings: OllamaEmbeddingProvider()
-        )
+        let hybrid = persistentKnowledgeLibrary(databaseURL: databaseURL)
         let memoryRuntime = MemoryRuntime(
             repository: SQLiteMemoryRepository(databaseURL: databaseURL),
             writePolicy: .explicitOnly
@@ -57,6 +51,16 @@ public extension LumiEngine {
             toolRuntime: toolRuntime,
             agentRuntime: agentRuntime,
             telemetry: telemetry
+        )
+    }
+
+    static func persistentKnowledgeLibrary(
+        databaseURL: URL = SQLiteConversationStore.defaultDatabaseURL()
+    ) -> HybridKnowledgeLibrary {
+        HybridKnowledgeLibrary(
+            sparse: SQLiteKnowledgeStore(databaseURL: databaseURL),
+            vectors: SQLiteVectorIndex(databaseURL: databaseURL),
+            embeddings: OllamaEmbeddingProvider()
         )
     }
 
