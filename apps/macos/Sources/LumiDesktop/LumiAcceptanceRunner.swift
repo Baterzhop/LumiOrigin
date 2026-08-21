@@ -25,7 +25,7 @@ enum LumiAcceptanceRunner {
     }
 
     static func run(requireModel: Bool) async throws -> LumiAcceptanceRun {
-        guard let executable = CoreProcessManager.findCoreExecutable() else {
+        guard let executable = await CoreProcessManager.findCoreExecutable() else {
             throw RunnerError.runtimeMissing
         }
         let baseURL = LumiClientConfiguration.defaultBaseURL()
