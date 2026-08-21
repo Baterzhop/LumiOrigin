@@ -2,6 +2,18 @@
 
 All notable Lumi V4 release-candidate changes are recorded here.
 
+## 4.0.0rc4 — 2026-08-21
+
+First-use local model configuration:
+
+- added native Ollama server, chat-model, embedding-model and dense-retrieval settings for the app-managed Core;
+- added installed-model discovery through Ollama's fixed `GET /api/tags` endpoint;
+- persisted non-secret model settings in UserDefaults while keeping Core API keys in Keychain;
+- injected saved model configuration only into Core processes owned by Lumi, while preserving explicit environment-variable overrides;
+- added managed-Core restart after model changes without terminating external/remote Core processes;
+- extended diagnostics with configured non-secret model metadata;
+- added Swift validation, persistence, environment-mapping and model-discovery transport tests.
+
 ## 4.0.0rc3 — 2026-08-21
 
 Release polish and supportability:
