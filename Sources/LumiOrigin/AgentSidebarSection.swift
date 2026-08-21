@@ -7,6 +7,8 @@ struct AgentSidebarSection: View {
 
     var body: some View {
         Group {
+            ConversationSidebarSection(model: model)
+
             Section("Agent Runtime") {
                 TextField("Goal for Agent…", text: $model.agentGoal, axis: .vertical)
                     .lineLimit(2...5)
