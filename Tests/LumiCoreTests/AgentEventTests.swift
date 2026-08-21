@@ -49,6 +49,39 @@ final class AgentEventTests: XCTestCase {
         XCTAssertEqual(finalRun.steps.count, 1)
     }
 
+    func testObserverSeesEventsFromOrdinaryStartAPI() async throws {
+        let runtime = AgentRuntime(
+            planner: EventSequencePlanner(),
+            tools: ToolRuntime(
+                registry: ToolRegistry(tools: [EventEchoTool()])
+            )
+        )
+
+        let observer = await runtime.events()
+        async let operation = runtime.start(goal: "Run through the ordinary API")
+
+        var observed: [AgentEvent] = []
+        for await event in observer {
+            observed.append(event)
+            if case .terminal = event { break }
+        }
+
+        let finalRun = try await operation
+        XCTAssertEqual(finalRun.state, .completed)
+        XCTAssertTrue(observed.contains { event in
+            if case .toolStarted(_, let call) = event {
+                return call.toolName == "event.echo"
+            }
+            return false
+        })
+        XCTAssertTrue(observed.contains { event in
+            if case .terminal(let run) = event {
+                return run.id == finalRun.id && run.state == .completed
+            }
+            return false
+        })
+    }
+
     func testConfirmationPauseAndResumeHaveSeparateLiveStreams() async throws {
         let recorder = EventExecutionRecorder()
         let runtime = AgentRuntime(
