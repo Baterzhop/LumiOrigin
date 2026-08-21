@@ -43,13 +43,14 @@ final class ConversationCompactionTests: XCTestCase {
         let history = await memory.all()
         let summary = history.first?.content ?? ""
         let info = await memory.compactionInfo()
+        let recentAfterCompaction = await memory.recent(limit: 20)
 
         XCTAssertTrue(summary.contains("message-0"), "Earliest compacted context should survive bounded compaction.")
         XCTAssertTrue(summary.contains("message-19"), "Newest compacted context should survive bounded compaction.")
         XCTAssertTrue(summary.contains("intermediate compacted snippets omitted"))
         XCTAssertEqual(info.compactedMessages, 20)
         XCTAssertGreaterThan(info.omittedSnippets, 0)
-        XCTAssertEqual(await memory.recent(limit: 20).first?.content, "message-20 payload")
+        XCTAssertEqual(recentAfterCompaction.first?.content, "message-20 payload")
     }
 
     func testRestoreRebuildsCompactionFromDurableFullTranscript() async {
@@ -63,7 +64,8 @@ final class ConversationCompactionTests: XCTestCase {
         await memory.replace(with: restored)
 
         let history = await memory.all()
-        XCTAssertEqual(await memory.recent(limit: 20).count, 10)
+        let recentAfterRestore = await memory.recent(limit: 20)
+        XCTAssertEqual(recentAfterRestore.count, 10)
         XCTAssertEqual(history.first?.role, .system)
         XCTAssertTrue(history.first?.content.contains("persisted-0") == true)
         XCTAssertTrue(history.first?.content.contains("persisted-7") == true)
