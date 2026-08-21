@@ -162,6 +162,20 @@ public actor AgentRuntime {
         }
     }
 
+    /// Explicitly discard one process-local pending continuation without granting
+    /// the requested capability and without asking the model to continue. This is
+    /// used when a higher-level user-visible workflow (for example TaskRunner) is
+    /// cancelled while waiting. It is not equivalent to approval or denial and
+    /// creates no authorization grant.
+    @discardableResult
+    public func abandonPendingPermission(pendingID: UUID) -> Bool {
+        guard pendingExecutions.removeValue(forKey: pendingID) != nil else {
+            return false
+        }
+        phase = pendingExecutions.isEmpty ? .idle : .awaitingPermission
+        return true
+    }
+
     public func loadConversation(id: UUID) async throws -> Conversation? {
         phase = .loadingConversation
         defer {
