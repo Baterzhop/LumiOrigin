@@ -7,8 +7,12 @@ public extension LumiEngine {
     /// workspace/context tools; AgentRuntime remains explicit.
     static func persistentDefault() -> LumiEngine {
         let databaseURL = SQLiteConversationStore.defaultDatabaseURL()
-        let llm = ModelRouter.localOllamaDefault()
-        let hybrid = persistentKnowledgeLibrary(databaseURL: databaseURL)
+        let configuration = LocalModelConfiguration.environment()
+        let llm = ModelRouter.localOllamaDefault(configuration: configuration)
+        let hybrid = persistentKnowledgeLibrary(
+            databaseURL: databaseURL,
+            configuration: configuration
+        )
         let memoryRuntime = MemoryRuntime(
             repository: SQLiteMemoryRepository(databaseURL: databaseURL),
             writePolicy: .explicitOnly
@@ -55,12 +59,16 @@ public extension LumiEngine {
     }
 
     static func persistentKnowledgeLibrary(
-        databaseURL: URL = SQLiteConversationStore.defaultDatabaseURL()
+        databaseURL: URL = SQLiteConversationStore.defaultDatabaseURL(),
+        configuration: LocalModelConfiguration = .environment()
     ) -> HybridKnowledgeLibrary {
         HybridKnowledgeLibrary(
             sparse: SQLiteKnowledgeStore(databaseURL: databaseURL),
             vectors: SQLiteVectorIndex(databaseURL: databaseURL),
-            embeddings: OllamaEmbeddingProvider()
+            embeddings: OllamaEmbeddingProvider(
+                endpoint: configuration.embeddingEndpoint,
+                model: configuration.embeddingModel
+            )
         )
     }
 
