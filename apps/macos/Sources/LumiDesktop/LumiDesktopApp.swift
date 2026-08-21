@@ -20,6 +20,7 @@ struct LumiDesktopApp: App {
                     Task { await coreManager.restart() }
                 }
                 Divider()
+                OpenReadinessCommand()
                 OpenDiagnosticsCommand()
             }
             CommandMenu("Developer") {
@@ -30,6 +31,11 @@ struct LumiDesktopApp: App {
         Settings {
             LumiSettingsView()
         }
+
+        Window("Lumi Readiness Center", id: "readiness") {
+            LumiReadinessView(coreManager: coreManager)
+        }
+        .defaultSize(width: 800, height: 660)
 
         Window("Lumi Diagnostics", id: "diagnostics") {
             LumiDiagnosticsView(coreManager: coreManager)
@@ -47,6 +53,17 @@ struct LumiDesktopApp: App {
 private final class LumiApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         CoreProcessManager.shared.stopManagedCore()
+    }
+}
+
+private struct OpenReadinessCommand: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Open Readiness Center…") {
+            openWindow(id: "readiness")
+        }
+        .keyboardShortcut("r", modifiers: [.command, .shift])
     }
 }
 
