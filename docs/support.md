@@ -7,8 +7,9 @@ When Lumi does not start or behaves unexpectedly:
 1. open **Core → Open Diagnostics…** in Lumi and refresh the report;
 2. run the installed Core doctor;
 3. inspect the Core log;
-4. verify the configured local model if the issue concerns generated answers;
-5. do not delete the SQLite state before making a verified backup.
+4. use **Lumi → Settings → Discover installed models** if the issue concerns generated answers;
+5. verify that the active runtime reports the same chat model you selected;
+6. do not delete the SQLite state before making a verified backup.
 
 ## Installed paths on macOS
 
@@ -34,7 +35,7 @@ To require both database and real local-model availability:
 
 ## Diagnostics privacy contract
 
-The native diagnostics view is intended to be safe to paste into a support issue after normal review. It includes runtime metadata but intentionally excludes:
+The native diagnostics view is intended to be safe to paste into a support issue after normal review. It includes runtime metadata and configured non-secret model names/URLs but intentionally excludes:
 
 - API-key values;
 - prompt/chat text;
@@ -61,7 +62,20 @@ Restore requires Core to be stopped:
 
 ## Local model troubleshooting
 
-Lumi uses an Ollama-compatible local endpoint. A successful repository/CI test does not prove that the target Mac has the requested model installed.
+Lumi uses an Ollama-compatible endpoint. A successful repository/CI test does not prove that the target Mac has the requested model installed.
+
+In **Lumi → Settings**:
+
+1. confirm the Ollama server URL (normally `http://127.0.0.1:11434`);
+2. click **Discover installed models**;
+3. select an installed chat model;
+4. choose an embedding model if dense retrieval is enabled;
+5. click **Save models & restart managed Core**;
+6. open Diagnostics and confirm the active runtime model.
+
+Model discovery uses Ollama's fixed `/api/tags` HTTP endpoint; it does not invoke a shell. If discovery fails, confirm that Ollama itself is running and reachable at the configured URL.
+
+Explicit `LUMI_OLLAMA_*` environment variables override the saved UI values. If the active model does not match Settings in a development environment, inspect those variables first.
 
 Run the physical-machine acceptance gate from the repository:
 
@@ -71,18 +85,18 @@ Run the physical-machine acceptance gate from the repository:
 
 The result must report success without fallback before `4.0.0` GA can be declared.
 
-## Remote Core troubleshooting
+## Remote Core / model-server troubleshooting
 
-The native client rejects remote plain HTTP. Use HTTPS and configure the matching Lumi API key in macOS Keychain through **Lumi → Settings**.
+The native client rejects remote plain HTTP for both Core and Ollama model-server configuration. Use HTTPS for remote endpoints.
 
-The base URL cannot contain embedded username/password credentials, a query string or fragment. Keep authentication in the API-key field.
+Base URLs cannot contain embedded username/password credentials, a query string or fragment. Keep Core authentication in the dedicated API-key field. RC4 does not add arbitrary model-server credential storage.
 
 ## Release artifact verification
 
 For the macOS ZIP:
 
 ```bash
-shasum -a 256 -c Lumi-macOS-4.0.0rc3.zip.sha256
+shasum -a 256 -c Lumi-macOS-4.0.0rc4.zip.sha256
 ```
 
 For Python release artifacts on Linux:
