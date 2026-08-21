@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: lumi-v4-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -22,6 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Validate shell entrypoints
+        run: bash -n scripts/install_lumi.sh scripts/start_lumi.sh scripts/build_macos_app.sh
       - name: Install tested dependency set
         run: |
           python -m pip install -c services/core/requirements.lock -e "services/core[dev]"
@@ -130,11 +135,58 @@ jobs:
       - name: Build native client
         working-directory: apps/macos
         run: swift build
-      - name: Test client transport models
+      - name: Test client transport and configuration models
         working-directory: apps/macos
         run: swift test
       - name: Package local macOS app
         run: |
           bash scripts/build_macos_app.sh
           test -d dist/Lumi.app
-          ls dist/Lumi-macOS-*.zip >/dev/null
+          plutil -lint dist/Lumi.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/Lumi.app
+          ls dist/Lumi-macOS-4.0.0rc2.zip >/dev/null
+
+  macos-install-smoke:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run production-style one-command install
+        run: PYTHON=python3 bash scripts/install_lumi.sh --no-user-app
+      - name: Verify stable runtime layout
+        run: |
+          CORE="$HOME/Library/Application Support/Lumi/runtime/venv/bin/lumi-core"
+          test -x "$CORE"
+          LUMI_DATA_DIR="$HOME/Library/Application Support/Lumi/data" LUMI_RAG_DENSE=false "$CORE" doctor --no-model --require-database
+          test -d dist/Lumi.app
+      - name: Acceptance test installed Core runtime
+        env:
+          LUMI_DATA_DIR: ${{ runner.temp }}/lumi-installed-runtime
+          LUMI_RAG_DENSE: "false"
+          LUMI_MODEL_TIMEOUT: "1"
+        run: |
+          VENV="$HOME/Library/Application Support/Lumi/runtime/venv"
+          "$VENV/bin/lumi-core" serve --host 127.0.0.1 --port 8793 > "${RUNNER_TEMP}/lumi-installed-core.log" 2>&1 &
+          CORE_PID=$!
+          cleanup() {
+            kill "$CORE_PID" >/dev/null 2>&1 || true
+            wait "$CORE_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          "$VENV/bin/python" - <<'PY'
+          import time
+          import httpx
+          deadline = time.time() + 20
+          while time.time() < deadline:
+              try:
+                  response = httpx.get("http://127.0.0.1:8793/ready", timeout=1)
+                  if response.status_code == 200 and response.json().get("ok") is True:
+                      raise SystemExit(0)
+              except Exception:
+                  pass
+              time.sleep(0.25)
+          raise SystemExit("Installed Core did not become ready")
+          PY
+          "$VENV/bin/python" scripts/acceptance_local.py --base-url http://127.0.0.1:8793
