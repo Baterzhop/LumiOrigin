@@ -36,12 +36,11 @@ Requirements: macOS 13+, Python 3.11+ and Swift 5.9+. Ollama is optional for fal
 ```bash
 git clone https://github.com/Baterzhop/LumiOrigin.git
 cd LumiOrigin
-git checkout lumi-v4-release
 bash scripts/install_lumi.sh
 bash scripts/start_lumi.sh
 ```
 
-The installer creates `.venv`, installs the Core, initializes the verified SQLite state and builds an ad-hoc signed `dist/Lumi.app`.
+`main` is now the V4 RC1 line. The installer creates `.venv`, resolves the tested dependency set through `services/core/requirements.lock`, installs the Core, initializes the verified SQLite state and builds an ad-hoc signed `dist/Lumi.app`.
 
 ## Operations
 
@@ -66,7 +65,7 @@ Lumi currently ingests PDF, Markdown and text files. Retrieval combines SQLite F
 
 ## Memory
 
-Conversation input is token-budgeted. Older dialogue can be compacted into persisted summaries. Durable memory is created only from an explicit approved user action and is retrievable through FTS5 plus optional embeddings. Regression datasets now include English, Ukrainian, German and Hungarian plumbing cases.
+Conversation input is token-budgeted. Older dialogue can be compacted into persisted summaries. Durable memory is created only from an explicit approved user action and is retrievable through FTS5 plus optional embeddings. Regression datasets include English, Ukrainian, German and Hungarian plumbing cases.
 
 ## Agent tools
 
@@ -85,11 +84,12 @@ Hardened configuration rejects weak API keys, wildcard CORS and unsafe network s
 The release gate covers:
 
 - Ubuntu/macOS Python install + dependency checks;
+- exact tested dependency constraints for Lumi's own release environment;
 - full unit/API/security/RAG/memory/tools/Developer-Agent tests;
 - multilingual deterministic RAG/memory regressions;
 - fallback HTTP/SSE live acceptance;
 - primary-model + dense-embedding HTTP/SSE acceptance against an Ollama-compatible deterministic CI server;
-- Python wheel/sdist build;
+- Python wheel/sdist build plus clean-environment wheel install smoke;
 - Swift build/tests;
 - macOS `.app` packaging, plist validation and code-sign verification.
 
@@ -99,4 +99,4 @@ The final target-machine gate is intentionally separate because GitHub cannot ac
 python scripts/acceptance_local.py --require-model
 ```
 
-See `docs/architecture.md`, `docs/hardening.md`, `docs/release.md` and `RELEASE_CHECKLIST.md` for design, security and release contracts.
+See `docs/architecture.md`, `docs/hardening.md`, `docs/release.md`, `docs/reproducibility.md` and `RELEASE_CHECKLIST.md` for design, security and release contracts.
