@@ -21,6 +21,11 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+*.egg-info/
+
+# Build/release output
+dist/
+services/core/dist/
 
 # Lumi local runtime state and secrets
 .env
