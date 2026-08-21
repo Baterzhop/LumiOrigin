@@ -2,6 +2,21 @@
 
 All notable Lumi V4 release-candidate changes are recorded here.
 
+## 4.0.0rc5 — 2026-08-21
+
+Target-machine readiness and first-run completion:
+
+- added a packaged `lumi-core acceptance` command so the installed runtime can execute its own release contract without repository-script dependencies;
+- made acceptance repeatable with one dedicated conversation and deterministic deduplicated knowledge probe while cleaning temporary durable memory;
+- expanded live acceptance to cover health/readiness, ordinary chat, SSE, real-model fallback enforcement, durable-memory retrieval, grounded knowledge retrieval, tool-registry discovery and verified database backup;
+- added a native **Lumi Readiness Center** that runs the installed acceptance command and shows provider/model/fallback/SSE status;
+- added first-run Ollama/model setup with installed-model discovery, chat/embedding selection, dense-retrieval control and safe managed-Core restart;
+- kept Core API keys out of command-line arguments and passed them to the acceptance child only through its process environment;
+- added Python and Swift regression tests for the packaged acceptance contract;
+- added a credential-ready Developer-ID/notarization/stapling/Gatekeeper script and CI syntax validation;
+- moved CI and installed-runtime smoke from repository-only acceptance scripts to the packaged `lumi-core acceptance` command;
+- bumped Core and macOS artifacts to `4.0.0rc5`.
+
 ## 4.0.0rc4 — 2026-08-21
 
 First-use local model configuration:
