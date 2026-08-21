@@ -19,7 +19,8 @@ public struct ModelRoutingPolicy: Sendable {
 }
 
 /// Routes generation requests by semantic role while preserving the LLMClient contract.
-/// Each route may independently wrap its own retry/fallback policy.
+/// A failed specialized route may fall back to the default generation client before that client's
+/// own provider fallback policy is applied.
 public struct ModelRouter: LLMClient, Sendable {
     private let defaultClient: any LLMClient
     private let routes: [ModelRole: any LLMClient]
@@ -41,25 +42,101 @@ public struct ModelRouter: LLMClient, Sendable {
 
     public func complete(_ request: ModelRequest) async throws -> ModelResponse {
         let role = selectedRole(for: request)
-        let client = routes[role] ?? defaultClient
-        let response = try await client.complete(request)
-        return annotate(response, role: role)
+
+        guard let routedClient = routes[role] else {
+            return annotate(
+                try await defaultClient.complete(request),
+                role: role,
+                routeFallbackUsed: false
+            )
+        }
+
+        do {
+            return annotate(
+                try await routedClient.complete(request),
+                role: role,
+                routeFallbackUsed: false
+            )
+        } catch {
+            if Task.isCancelled { throw LumiRuntimeError.cancelled }
+            return annotate(
+                try await defaultClient.complete(request),
+                role: role,
+                routeFallbackUsed: true
+            )
+        }
     }
 
     public func stream(_ request: ModelRequest) -> AsyncThrowingStream<ModelEvent, Error> {
         let role = selectedRole(for: request)
-        let client = routes[role] ?? defaultClient
+        guard let routedClient = routes[role] else {
+            return annotatedStream(
+                from: defaultClient,
+                request: request,
+                role: role,
+                routeFallbackUsed: false
+            )
+        }
 
         return AsyncThrowingStream { continuation in
             let task = Task {
+                var emittedPrimaryContent = false
+
                 do {
-                    for try await event in client.stream(request) {
+                    for try await event in routedClient.stream(request) {
+                        try Task.checkCancellation()
+                        switch event {
+                        case .token(let token):
+                            emittedPrimaryContent = true
+                            continuation.yield(.token(token))
+                        case .completed(let response):
+                            continuation.yield(
+                                .completed(
+                                    annotate(
+                                        response,
+                                        role: role,
+                                        routeFallbackUsed: false
+                                    )
+                                )
+                            )
+                            continuation.finish()
+                            return
+                        }
+                    }
+
+                    if emittedPrimaryContent {
+                        throw LumiRuntimeError.invalidResponse
+                    }
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: LumiRuntimeError.cancelled)
+                        return
+                    }
+
+                    // Once partial content from one model has been emitted, switching models could
+                    // duplicate or contradict the visible answer. Fail instead of mixing streams.
+                    if emittedPrimaryContent {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+                }
+
+                do {
+                    for try await event in defaultClient.stream(request) {
                         try Task.checkCancellation()
                         switch event {
                         case .token(let token):
                             continuation.yield(.token(token))
                         case .completed(let response):
-                            continuation.yield(.completed(annotate(response, role: role)))
+                            continuation.yield(
+                                .completed(
+                                    annotate(
+                                        response,
+                                        role: role,
+                                        routeFallbackUsed: true
+                                    )
+                                )
+                            )
                             continuation.finish()
                             return
                         }
@@ -82,8 +159,8 @@ public struct ModelRouter: LLMClient, Sendable {
         }
     }
 
-    /// Local-first production policy. All roles use Ollama, but each role may select a different
-    /// local model through environment variables without changing engine/UI code.
+    /// Local-first production policy. The default chat route has its normal deterministic fallback.
+    /// Optional specialized Ollama models fall back to that chat route when unavailable.
     public static func localOllamaDefault() -> ModelRouter {
         let environment = ProcessInfo.processInfo.environment
         let baseModel = environment["LUMI_OLLAMA_MODEL"] ?? "llama3.2"
@@ -93,24 +170,78 @@ public struct ModelRouter: LLMClient, Sendable {
         let reflectionModel = environment["LUMI_OLLAMA_REFLECTION_MODEL"] ?? chatModel
         let agentModel = environment["LUMI_OLLAMA_AGENT_MODEL"] ?? chatModel
 
-        func client(model: String) -> any LLMClient {
-            ResilientLLMClient(primary: OllamaClient(model: model))
+        let chat: any LLMClient = ResilientLLMClient(
+            primary: OllamaClient(model: chatModel)
+        )
+        var routes: [ModelRole: any LLMClient] = [:]
+
+        func addSpecializedRoute(_ role: ModelRole, model: String) {
+            guard model != chatModel else { return }
+            routes[role] = OllamaClient(model: model)
         }
 
-        let chat = client(model: chatModel)
+        addSpecializedRoute(.knowledge, model: knowledgeModel)
+        addSpecializedRoute(.coding, model: codingModel)
+        addSpecializedRoute(.reflection, model: reflectionModel)
+        addSpecializedRoute(.agentPlanner, model: agentModel)
+
         return ModelRouter(
             defaultClient: chat,
-            routes: [
-                .chat: chat,
-                .knowledge: client(model: knowledgeModel),
-                .coding: client(model: codingModel),
-                .reflection: client(model: reflectionModel),
-                .agentPlanner: client(model: agentModel)
-            ]
+            routes: routes
         )
     }
 
-    private func annotate(_ response: ModelResponse, role: ModelRole) -> ModelResponse {
+    private func annotatedStream(
+        from client: any LLMClient,
+        request: ModelRequest,
+        role: ModelRole,
+        routeFallbackUsed: Bool
+    ) -> AsyncThrowingStream<ModelEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await event in client.stream(request) {
+                        try Task.checkCancellation()
+                        switch event {
+                        case .token(let token):
+                            continuation.yield(.token(token))
+                        case .completed(let response):
+                            continuation.yield(
+                                .completed(
+                                    annotate(
+                                        response,
+                                        role: role,
+                                        routeFallbackUsed: routeFallbackUsed
+                                    )
+                                )
+                            )
+                            continuation.finish()
+                            return
+                        }
+                    }
+                    continuation.finish(throwing: LumiRuntimeError.invalidResponse)
+                } catch is CancellationError {
+                    continuation.finish(throwing: LumiRuntimeError.cancelled)
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: LumiRuntimeError.cancelled)
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
+    }
+
+    private func annotate(
+        _ response: ModelResponse,
+        role: ModelRole,
+        routeFallbackUsed: Bool
+    ) -> ModelResponse {
         let metadata = response.runtime
         return ModelResponse(
             content: response.content,
@@ -118,7 +249,7 @@ public struct ModelRouter: LLMClient, Sendable {
                 provider: metadata.provider,
                 model: metadata.model,
                 modelRole: role,
-                fallbackUsed: metadata.fallbackUsed,
+                fallbackUsed: metadata.fallbackUsed || routeFallbackUsed,
                 latencyMs: metadata.latencyMs,
                 finishReason: metadata.finishReason,
                 usage: metadata.usage
