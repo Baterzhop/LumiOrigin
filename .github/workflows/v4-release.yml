@@ -27,6 +27,11 @@ jobs:
           "${RUNNER_TEMP}/verify-wheel/bin/python" -m pip install -c services/core/requirements.lock services/core/dist/lumi_core-*.whl
           "${RUNNER_TEMP}/verify-wheel/bin/python" -m pip check
           "${RUNNER_TEMP}/verify-wheel/bin/lumi-core" version
+      - name: Generate Core checksums
+        run: |
+          cd services/core/dist
+          sha256sum lumi_core-* > SHA256SUMS
+          cat SHA256SUMS
       - name: Upload Core distribution
         uses: actions/upload-artifact@v4
         with:
@@ -45,9 +50,17 @@ jobs:
           plutil -lint dist/Lumi.app/Contents/Info.plist
           codesign --verify --deep --strict dist/Lumi.app
           ls dist/Lumi-macOS-*.zip
+      - name: Generate macOS checksum
+        run: |
+          cd dist
+          ZIP="$(ls Lumi-macOS-*.zip | head -n 1)"
+          shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          cat "$ZIP.sha256"
       - name: Upload macOS app
         uses: actions/upload-artifact@v4
         with:
           name: lumi-macos
-          path: dist/Lumi-macOS-*.zip
+          path: |
+            dist/Lumi-macOS-*.zip
+            dist/Lumi-macOS-*.zip.sha256
           if-no-files-found: error

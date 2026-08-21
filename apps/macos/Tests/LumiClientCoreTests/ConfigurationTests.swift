@@ -13,11 +13,29 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(url.scheme, "https")
     }
 
+    func testAcceptsHTTPSPathPrefix() throws {
+        let url = try LumiClientConfiguration.validatedBaseURL("https://lumi.example.com/core")
+        XCTAssertEqual(url.path, "/core")
+    }
+
     func testRejectsRemotePlainHTTP() {
         XCTAssertThrowsError(try LumiClientConfiguration.validatedBaseURL("http://lumi.example.com:8790"))
     }
 
     func testRejectsNonHTTPURL() {
         XCTAssertThrowsError(try LumiClientConfiguration.validatedBaseURL("file:///tmp/lumi"))
+    }
+
+    func testRejectsEmbeddedCredentials() {
+        XCTAssertThrowsError(try LumiClientConfiguration.validatedBaseURL("https://user:secret@lumi.example.com")) { error in
+            guard case LumiClientConfiguration.ConfigurationError.embeddedCredentials = error else {
+                return XCTFail("Expected embeddedCredentials, got \(error)")
+            }
+        }
+    }
+
+    func testRejectsQueryAndFragment() {
+        XCTAssertThrowsError(try LumiClientConfiguration.validatedBaseURL("https://lumi.example.com?token=secret"))
+        XCTAssertThrowsError(try LumiClientConfiguration.validatedBaseURL("https://lumi.example.com#fragment"))
     }
 }

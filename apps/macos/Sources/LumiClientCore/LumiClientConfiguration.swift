@@ -5,6 +5,8 @@ public enum LumiClientConfiguration {
     public enum ConfigurationError: LocalizedError {
         case invalidURL
         case insecureRemoteHTTP
+        case embeddedCredentials
+        case unsupportedURLComponents
         case apiKeyTooShort
         case keychain(OSStatus)
 
@@ -14,6 +16,10 @@ public enum LumiClientConfiguration {
                 return "Enter a valid HTTP or HTTPS Lumi Core URL."
             case .insecureRemoteHTTP:
                 return "Plain HTTP is allowed only for localhost. Use HTTPS for remote Lumi Core connections."
+            case .embeddedCredentials:
+                return "Do not place usernames, passwords or API keys in the Core URL. Store the Lumi API key in Keychain instead."
+            case .unsupportedURLComponents:
+                return "The Lumi Core base URL cannot contain a query string or fragment."
             case .apiKeyTooShort:
                 return "Lumi API keys must contain at least 24 characters."
             case .keychain(let status):
@@ -54,11 +60,18 @@ public enum LumiClientConfiguration {
     public static func validatedBaseURL(_ value: String) throws -> URL {
         let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: clean),
-              let scheme = url.scheme?.lowercased(),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
-              let host = url.host,
+              let host = components.host,
               !host.isEmpty else {
             throw ConfigurationError.invalidURL
+        }
+        if components.user != nil || components.password != nil {
+            throw ConfigurationError.embeddedCredentials
+        }
+        if components.query != nil || components.fragment != nil {
+            throw ConfigurationError.unsupportedURLComponents
         }
         if scheme == "http" && !isLoopbackHost(host) {
             throw ConfigurationError.insecureRemoteHTTP

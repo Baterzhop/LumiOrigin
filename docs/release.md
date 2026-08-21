@@ -1,6 +1,6 @@
-# Lumi V4 RC2 Release Candidate
+# Lumi V4 RC3 Release Candidate
 
-This document defines the local release process for the V4 RC2 line.
+This document defines the local release process for the V4 RC3 line.
 
 ## Supported target
 
@@ -35,18 +35,18 @@ After installation:
 open "$HOME/Applications/Lumi.app"
 ```
 
-The native app now owns the normal local Core lifecycle:
+The native app owns the normal local Core lifecycle:
 
 1. read secure connection configuration;
 2. check whether Core is already healthy;
-3. if the configured URL is local and Core is offline, locate the installed `lumi-core` executable;
+3. if the configured URL is auto-manageable loopback HTTP and Core is offline, locate the installed `lumi-core` executable;
 4. start it on the configured loopback port;
 5. wait for health before constructing the normal chat UI;
 6. terminate only the Core child process started by this app when Lumi exits.
 
 The app-managed process writes stdout/stderr to `~/Library/Logs/Lumi/core.log` and uses `~/Library/Application Support/Lumi/data` unless `LUMI_DATA_DIR` is explicitly supplied.
 
-`scripts/start_lumi.sh` is now a convenience launcher on macOS. A terminal is not required to stay open for ordinary use.
+`scripts/start_lumi.sh` is a convenience launcher on macOS. A terminal is not required to stay open for ordinary use.
 
 ## Native connection settings
 
@@ -56,10 +56,18 @@ Security rules:
 
 - HTTP URLs are accepted only for loopback hosts;
 - remote Core configuration must use HTTPS;
+- usernames/passwords/API credentials embedded in the URL are rejected;
+- query strings and fragments are rejected from the base URL;
 - saved API keys must contain at least 24 characters;
 - deleting the saved key removes the generic-password Keychain item.
 
 Restart the app after changing Core connection settings so all view models use the new client configuration.
+
+## Native diagnostics
+
+Use **Core → Open Diagnostics…** (`⇧⌘I`). The report is intentionally metadata-only and may be copied for support. It includes app/Core versions, Core manager state, URL, whether a Keychain item exists, runtime/data/log paths, provider/model names, tool count and memory-retrieval mode.
+
+It does not include API-key values, prompt text, chat messages, durable-memory contents, knowledge-document contents or repository contents.
 
 ## Core operations CLI
 
@@ -105,6 +113,8 @@ After installing, the physical target-Mac gate is:
 
 The acceptance script exercises liveness/readiness, runtime metadata, ordinary chat, SSE streaming, durable-memory create/search/delete, document upload/retrieval and tool-registry discovery. `--require-model` additionally requires the configured local model to answer without fallback.
 
+The external GA checklist is tracked in GitHub issue #44. Repository CI cannot substitute for this physical-machine gate.
+
 ## macOS package
 
 Build locally:
@@ -117,7 +127,7 @@ Outputs:
 
 ```text
 dist/Lumi.app
-dist/Lumi-macOS-4.0.0rc2.zip
+dist/Lumi-macOS-4.0.0rc3.zip
 ```
 
 The local build is ad-hoc signed by default. A different signing identity can be selected with:
@@ -128,14 +138,23 @@ export LUMI_CODESIGN_IDENTITY="Developer ID Application: ..."
 
 Developer-ID signing and Apple notarization are distribution concerns and are not claimed by the repository until valid Apple credentials are configured.
 
-## GitHub release artifacts
+## GitHub release artifacts and checksums
 
 `.github/workflows/v4-release.yml` builds:
 
-- Python wheel + source distribution;
-- macOS app ZIP.
+- Python wheel + source distribution + `SHA256SUMS`;
+- macOS app ZIP + matching `.sha256` file.
 
 The workflow runs manually or for tags matching `v4.*`.
+
+Example verification:
+
+```bash
+shasum -a 256 -c Lumi-macOS-4.0.0rc3.zip.sha256
+sha256sum -c SHA256SUMS
+```
+
+Checksums provide artifact-integrity verification. They are not an identity/notarization mechanism.
 
 ## Release gate
 
@@ -153,6 +172,7 @@ A release-candidate commit is acceptable only if all of the following are green:
 10. macOS release app bundle build, plist validation and code-sign verification.
 11. Production-style macOS installation into the stable Application Support runtime.
 12. Live fallback acceptance against that installed runtime.
-13. Physical target-Mac acceptance with `scripts/acceptance_local.py --require-model`.
+13. Release-artifact checksum generation and verification.
+14. Physical target-Mac acceptance with `scripts/acceptance_local.py --require-model`.
 
-Items 1–12 are automatable in GitHub Actions. Item 13 is deliberately machine-specific because GitHub does not have the user's actual installed Ollama models or target-machine session.
+Items 1–13 are automatable. Item 14 is deliberately machine-specific because GitHub does not have the actual installed Ollama models or target-machine session.
