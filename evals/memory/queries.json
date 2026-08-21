@@ -3,5 +3,8 @@
   {"query":"Which language should replies continue in during a Ukrainian conversation?","relevant":"language"},
   {"query":"What is the Aurora project codename?","relevant":"project"},
   {"query":"When does the local project backup window start?","relevant":"backup"},
-  {"query":"What must happen before high risk side effects execute?","relevant":"review"}
+  {"query":"What must happen before high risk side effects execute?","relevant":"review"},
+  {"query":"Яке контрольне слово барвінок використовується для тесту української пам'яті?","relevant":"uk-memory"},
+  {"query":"Welches Kontrollwort Eichenblatt gehört zum deutschen Speichertest?","relevant":"de-memory"},
+  {"query":"Mi a magyar memóriateszt ellenőrző szava napraforgó?","relevant":"hu-memory"}
 ]
