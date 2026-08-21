@@ -1,4 +1,4 @@
-# Lumi V4 RC3
+# Lumi V4 RC4
 
 Lumi is a local-first AI assistant platform for macOS. V4 is a ground-up redesign with a native SwiftUI client and a Python Core that owns orchestration, durable state, retrieval, memory, policy-gated tools and the Developer Agent.
 
@@ -7,6 +7,7 @@ Lumi is a local-first AI assistant platform for macOS. V4 is a ground-up redesig
 ```text
 Lumi.app (SwiftUI)
   ├─ secure Core URL + Keychain API-key configuration
+  ├─ native Ollama model setup + installed-model discovery
   ├─ local Core lifecycle manager
   │    └─ starts/stops installed local lumi-core when needed
   │
@@ -27,7 +28,7 @@ Lumi Core (FastAPI)
 
 - local loopback access by default;
 - remote/LAN client configuration rejects plain HTTP and requires HTTPS;
-- Core URLs cannot contain embedded credentials, query strings or fragments;
+- Core and Ollama server URLs cannot contain embedded credentials, query strings or fragments;
 - optional Core API keys are stored by the native client in macOS Keychain;
 - untrusted documents, tool output and repository content are never treated as system instructions;
 - write tools require approval;
@@ -66,11 +67,22 @@ Core logs from the app-managed process are written to:
 ~/Library/Logs/Lumi/core.log
 ```
 
-## Native settings and diagnostics
+## Native settings, models and diagnostics
 
-Use **Lumi → Settings** to configure the Core URL and an optional API key. Remote Core URLs must use HTTPS. API keys are stored in macOS Keychain rather than UserDefaults. Restart Lumi after changing connection settings.
+Use **Lumi → Settings** to configure the Core URL and an optional API key. Remote Core URLs must use HTTPS. API keys are stored in macOS Keychain rather than UserDefaults.
 
-Use **Core → Open Diagnostics…** (`⇧⌘I`) to collect a support report containing only non-secret runtime metadata: app/Core versions, Core state, configured URL, Keychain-presence state, runtime/data/log paths, provider/model names and tool counts. The diagnostics view never includes API-key values, prompts, chat text, memory contents or knowledge-document contents.
+The same Settings window now configures the app-managed local model runtime:
+
+- Ollama server URL;
+- chat model;
+- embedding model;
+- dense-retrieval toggle.
+
+Use **Discover installed models** to query Ollama's official `GET /api/tags` endpoint and select from the models already present on the configured server. The app does not execute a shell command for discovery. **Save models & restart managed Core** persists the selection and restarts only a Core process owned by Lumi; an external or remote Core is never terminated by this action. Explicit `LUMI_OLLAMA_*` environment variables remain higher-priority development/automation overrides.
+
+Changing the Core URL or Core authentication still requires restarting Lumi so existing views rebuild their Core client connection.
+
+Use **Core → Open Diagnostics…** (`⇧⌘I`) to collect a support report containing only non-secret runtime metadata: app/Core versions, Core state, configured URLs, model names, Keychain-presence state, runtime/data/log paths, provider/model names and tool counts. The diagnostics view never includes API-key values, prompts, chat text, memory contents or knowledge-document contents.
 
 ## Operations
 
@@ -93,7 +105,7 @@ For a real local-model acceptance test from the repository:
 
 ## Knowledge
 
-Lumi currently ingests PDF, Markdown and text files. Retrieval combines SQLite FTS5/BM25 with optional Ollama embeddings through weighted reciprocal-rank fusion and can optionally use a CrossEncoder reranker. Responses carry document/chunk/page citations. Scanned-PDF OCR remains outside RC3.
+Lumi currently ingests PDF, Markdown and text files. Retrieval combines SQLite FTS5/BM25 with optional Ollama embeddings through weighted reciprocal-rank fusion and can optionally use a CrossEncoder reranker. Responses carry document/chunk/page citations. Scanned-PDF OCR remains outside RC4.
 
 ## Memory
 
@@ -117,7 +129,7 @@ The release workflow emits SHA-256 checksums next to the Python distributions an
 
 ```bash
 # macOS ZIP
-shasum -a 256 -c Lumi-macOS-4.0.0rc3.zip.sha256
+shasum -a 256 -c Lumi-macOS-4.0.0rc4.zip.sha256
 
 # Python artifact directory on Linux
 sha256sum -c SHA256SUMS
@@ -136,12 +148,12 @@ The release gate covers:
 - fallback HTTP/SSE live acceptance;
 - primary-model + dense-embedding HTTP/SSE acceptance against an Ollama-compatible deterministic CI server;
 - Python wheel/sdist build plus clean-environment wheel install smoke;
-- Swift build/tests, including secure native connection validation;
-- macOS `.app` packaging, plist validation and code-sign verification;
+- Swift build/tests, including secure Core/Ollama URL validation, persisted model settings, environment override behavior and injected Ollama model discovery transport;
+- macOS `.app` packaging, plist validation, code-sign and checksum verification;
 - production-style macOS one-command installation into the stable runtime layout;
 - live acceptance against that installed Core runtime.
 
-The final physical target-machine model gate remains separate because GitHub cannot access the user's installed Ollama models:
+The final physical target-machine model gate remains separate because GitHub cannot access the actual installed Ollama models:
 
 ```bash
 "$HOME/Library/Application Support/Lumi/runtime/venv/bin/python" scripts/acceptance_local.py --require-model

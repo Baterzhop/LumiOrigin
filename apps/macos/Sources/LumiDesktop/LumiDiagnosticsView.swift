@@ -54,7 +54,7 @@ struct LumiDiagnosticsView: View {
             }
         }
         .padding(18)
-        .frame(minWidth: 720, minHeight: 500)
+        .frame(minWidth: 720, minHeight: 540)
         .task { await refresh() }
     }
 
@@ -65,6 +65,7 @@ struct LumiDiagnosticsView: View {
         defer { isRefreshing = false }
 
         let client = LumiClientConfiguration.configuredClient()
+        let modelSettings = LumiModelConfiguration.current()
         let runtimeURL = CoreProcessManager.findCoreExecutable()?.path ?? "not found"
         let keyState = LumiClientConfiguration.hasStoredAPIKey() ? "stored in Keychain" : "not stored"
         let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
@@ -82,6 +83,10 @@ struct LumiDiagnosticsView: View {
             "Runtime executable: \(runtimeURL)",
             "Data directory: \(dataDirectoryURL.path)",
             "Core log: \(logURL.path)",
+            "Configured Ollama server: \(modelSettings.serverURL.absoluteString)",
+            "Configured chat model: \(modelSettings.chatModel)",
+            "Configured embedding model: \(modelSettings.embeddingModel)",
+            "Configured dense retrieval: \(modelSettings.denseRetrievalEnabled ? "enabled" : "disabled")",
         ]
 
         do {

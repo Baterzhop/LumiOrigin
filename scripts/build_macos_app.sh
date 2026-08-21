@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT/apps/macos"
 OUT_DIR="${LUMI_RELEASE_DIR:-$ROOT/dist}"
-VERSION="${LUMI_VERSION:-4.0.0rc3}"
+VERSION="${LUMI_VERSION:-4.0.0rc4}"
 BUNDLE_ID="${LUMI_BUNDLE_ID:-app.lumi.desktop}"
 SIGN_IDENTITY="${LUMI_CODESIGN_IDENTITY:--}"
 

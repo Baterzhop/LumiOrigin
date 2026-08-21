@@ -150,10 +150,10 @@ jobs:
           test -d dist/Lumi.app
           plutil -lint dist/Lumi.app/Contents/Info.plist
           codesign --verify --deep --strict dist/Lumi.app
-          test -f dist/Lumi-macOS-4.0.0rc3.zip
+          test -f dist/Lumi-macOS-4.0.0rc4.zip
           cd dist
-          shasum -a 256 Lumi-macOS-4.0.0rc3.zip > Lumi-macOS-4.0.0rc3.zip.sha256
-          shasum -a 256 -c Lumi-macOS-4.0.0rc3.zip.sha256
+          shasum -a 256 Lumi-macOS-4.0.0rc4.zip > Lumi-macOS-4.0.0rc4.zip.sha256
+          shasum -a 256 -c Lumi-macOS-4.0.0rc4.zip.sha256
 
   macos-install-smoke:
     runs-on: macos-14

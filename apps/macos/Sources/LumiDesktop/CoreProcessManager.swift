@@ -142,6 +142,9 @@ final class CoreProcessManager: ObservableObject {
         if environment["LUMI_DATA_DIR"] == nil {
             environment["LUMI_DATA_DIR"] = dataDirectory.path
         }
+        for (key, value) in LumiModelConfiguration.managedCoreEnvironment(existingEnvironment: environment) {
+            environment[key] = value
+        }
 
         let process = Process()
         process.executableURL = executable
