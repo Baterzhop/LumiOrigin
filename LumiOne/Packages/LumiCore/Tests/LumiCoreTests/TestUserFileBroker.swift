@@ -1,10 +1,10 @@
 import Foundation
 @testable import LumiCore
 
-final class TestUserFileBroker: UserFileAccessBroker, @unchecked Sendable {
+final class TestUserFileBroker: UserFileAccessBroker, UserFileWriteBroker, @unchecked Sendable {
     private struct Entry {
         let descriptor: UserFileDescriptor
-        let data: Data
+        var data: Data
     }
 
     private let lock = NSLock()
@@ -65,5 +65,41 @@ final class TestUserFileBroker: UserFileAccessBroker, @unchecked Sendable {
             byteCount: data.count,
             truncated: truncated
         )
+    }
+
+    func writeText(
+        resourceID: UserFileResourceID,
+        content: String,
+        requireEmpty: Bool
+    ) async throws -> UserFileTextWrite {
+        let data = Data(content.utf8)
+        guard data.count <= 16_777_216 else {
+            throw UserFileAccessError.invalidLimit
+        }
+
+        return try lock.withLock {
+            guard var entry = entries[resourceID] else {
+                throw UserFileAccessError.unknownResource(resourceID)
+            }
+            if requireEmpty && !entry.data.isEmpty {
+                throw UserFileAccessError.outputNotEmpty(resourceID)
+            }
+            entry.data = data
+            entries[resourceID] = entry
+            return UserFileTextWrite(
+                descriptor: entry.descriptor,
+                byteCount: data.count
+            )
+        }
+    }
+
+    func content(resourceID: UserFileResourceID) throws -> String {
+        guard let entry = lock.withLock({ entries[resourceID] }) else {
+            throw UserFileAccessError.unknownResource(resourceID)
+        }
+        guard let text = String(data: entry.data, encoding: .utf8) else {
+            throw UserFileAccessError.notUTF8
+        }
+        return text
     }
 }
