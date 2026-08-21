@@ -22,6 +22,34 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public struct ConversationTranscriptCursor: Codable, Hashable, Sendable {
+    public let timestamp: Date
+    public let messageID: UUID
+
+    public init(timestamp: Date, messageID: UUID) {
+        self.timestamp = timestamp
+        self.messageID = messageID
+    }
+}
+
+public struct ConversationTranscriptPage: Codable, Hashable, Sendable {
+    /// Always chronological (oldest -> newest) within this page.
+    public let messages: [ChatMessage]
+    /// Pass this cursor back to request the immediately older page. Nil means start of transcript.
+    public let olderCursor: ConversationTranscriptCursor?
+    public let hasOlder: Bool
+
+    public init(
+        messages: [ChatMessage],
+        olderCursor: ConversationTranscriptCursor?,
+        hasOlder: Bool
+    ) {
+        self.messages = messages
+        self.olderCursor = olderCursor
+        self.hasOlder = hasOlder
+    }
+}
+
 /// Durable conversation metadata and transcripts. Long-term memory, knowledge, agent runs and
 /// runtime telemetry intentionally have separate lifecycles and are not deleted when a chat changes.
 public protocol ConversationStore: Sendable {
@@ -32,6 +60,11 @@ public protocol ConversationStore: Sendable {
     func deleteConversation(id: UUID) async throws
 
     func loadMessages(conversationID: UUID) async throws -> [ChatMessage]
+    func loadTranscriptPage(
+        conversationID: UUID,
+        before cursor: ConversationTranscriptCursor?,
+        limit: Int
+    ) async throws -> ConversationTranscriptPage
     func append(_ message: ChatMessage, conversationID: UUID) async throws
     func clear(conversationID: UUID) async throws
 }
@@ -95,6 +128,41 @@ public actor InMemoryConversationStore: ConversationStore {
         messages[conversationID] ?? []
     }
 
+    public func loadTranscriptPage(
+        conversationID: UUID,
+        before cursor: ConversationTranscriptCursor?,
+        limit: Int
+    ) -> ConversationTranscriptPage {
+        let finalLimit = max(1, min(limit, 500))
+        let ordered = (messages[conversationID] ?? []).sorted(by: Self.isEarlier)
+
+        let endIndex: Int
+        if let cursor,
+           let index = ordered.firstIndex(where: { $0.id == cursor.messageID }) {
+            endIndex = index
+        } else if let cursor {
+            endIndex = ordered.firstIndex(where: {
+                $0.timestamp > cursor.timestamp
+                    || ($0.timestamp == cursor.timestamp && $0.id.uuidString >= cursor.messageID.uuidString)
+            }) ?? ordered.count
+        } else {
+            endIndex = ordered.count
+        }
+
+        let startIndex = max(0, endIndex - finalLimit)
+        let pageMessages = Array(ordered[startIndex..<endIndex])
+        let hasOlder = startIndex > 0
+        let olderCursor = hasOlder ? pageMessages.first.map {
+            ConversationTranscriptCursor(timestamp: $0.timestamp, messageID: $0.id)
+        } : nil
+
+        return ConversationTranscriptPage(
+            messages: pageMessages,
+            olderCursor: olderCursor,
+            hasOlder: hasOlder
+        )
+    }
+
     public func append(_ message: ChatMessage, conversationID: UUID) throws {
         if conversations[conversationID] == nil {
             _ = try createConversation(id: conversationID, title: "New chat", createdAt: message.timestamp)
@@ -125,6 +193,11 @@ public actor InMemoryConversationStore: ConversationStore {
             updatedAt: updatedAt,
             messageCount: messages[id]?.count ?? 0
         )
+    }
+
+    private static func isEarlier(_ lhs: ChatMessage, _ rhs: ChatMessage) -> Bool {
+        if lhs.timestamp == rhs.timestamp { return lhs.id.uuidString < rhs.id.uuidString }
+        return lhs.timestamp < rhs.timestamp
     }
 
     private static func validatedTitle(_ title: String) throws -> String {
