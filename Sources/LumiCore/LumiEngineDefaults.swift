@@ -6,7 +6,7 @@ public extension LumiEngine {
     /// ToolRuntime exposes only sandboxed read-only workspace tools; AgentRuntime remains explicit.
     static func persistentDefault() -> LumiEngine {
         let databaseURL = SQLiteConversationStore.defaultDatabaseURL()
-        let llm = ResilientLLMClient(primary: OllamaClient())
+        let llm = ModelRouter.localOllamaDefault()
         let sparse = SQLiteKnowledgeStore(databaseURL: databaseURL)
         let vectors = SQLiteVectorIndex(databaseURL: databaseURL)
         let hybrid = HybridKnowledgeLibrary(
