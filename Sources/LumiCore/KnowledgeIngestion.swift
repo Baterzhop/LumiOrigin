@@ -127,6 +127,16 @@ public protocol KnowledgeRetrieving: Sendable {
 public protocol KnowledgeStore: KnowledgeRetrieving {
     func replace(source: KnowledgeSourceRecord, chunks: [KnowledgeChunkRecord]) async throws
     func source(id: String) async throws -> KnowledgeSourceRecord?
+    func listSources(limit: Int) async throws -> [KnowledgeSourceRecord]
+    func removeSource(id: String) async throws
+}
+
+/// Mutable local knowledge library used by the application composition root.
+/// Retrieval remains available through the narrower `KnowledgeRetrieving` contract for consumers
+/// that do not need ingestion or lifecycle access.
+public protocol KnowledgeLibraryManaging: KnowledgeRetrieving {
+    func ingest(_ document: IngestibleDocument) async throws -> HybridIngestionReport
+    func listSources(limit: Int) async throws -> [KnowledgeSourceRecord]
     func removeSource(id: String) async throws
 }
 
