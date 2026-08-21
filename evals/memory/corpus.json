@@ -1,0 +1,10 @@
+[
+  {"key":"ui","kind":"preference","title":"UI stack","content":"For the native desktop client, prefer SwiftUI and keep AI orchestration outside the UI process."},
+  {"key":"language","kind":"preference","title":"Reply language","content":"When a conversation is in Ukrainian, continue replying in Ukrainian unless asked to switch languages."},
+  {"key":"project","kind":"project","title":"Project codename","content":"The internal codename for the synthetic memory benchmark project is Aurora Zebra."},
+  {"key":"backup","kind":"fact","title":"Backup schedule","content":"The local project backup window starts every Sunday at 03:30."},
+  {"key":"review","kind":"note","title":"Review rule","content":"High risk side effects require explicit approval before execution."},
+  {"key":"uk-memory","kind":"preference","title":"Українська пам'ять","content":"Для тесту української пам'яті контрольне слово — барвінок. Відповіді мають зберігати мову поточної розмови."},
+  {"key":"de-memory","kind":"fact","title":"Deutsche Erinnerung","content":"Für den deutschen Speichertest lautet das Kontrollwort Eichenblatt. Dauerhafte Erinnerungen bleiben überprüfbar und löschbar."},
+  {"key":"hu-memory","kind":"fact","title":"Magyar emlék","content":"A magyar memóriateszt ellenőrző szava napraforgó. A tartós emlékek megtekinthetők és törölhetők."}
+]

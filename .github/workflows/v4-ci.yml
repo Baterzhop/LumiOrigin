@@ -1,0 +1,132 @@
+name: Lumi V4 CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: lumi-v4-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+        python: ["3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install -e "services/core[dev]"
+          python -m pip check
+          lumi-core version
+      - name: CLI doctor
+        env:
+          LUMI_DATA_DIR: ${{ runner.temp }}/lumi-doctor
+          LUMI_RAG_DENSE: "false"
+        run: lumi-core doctor --initialize --no-model --require-database
+      - name: Unit and API integration tests
+        run: pytest services/core/tests -q
+      - name: Deterministic multilingual RAG regression gate
+        if: matrix.os == 'ubuntu-latest'
+        run: python scripts/eval_rag.py --assert-thresholds
+      - name: Deterministic multilingual memory regression gate
+        if: matrix.os == 'ubuntu-latest'
+        run: python scripts/eval_memory.py --assert-thresholds
+      - name: Fallback HTTP/SSE acceptance test
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          LUMI_DATA_DIR: ${{ runner.temp }}/lumi-e2e-fallback
+          LUMI_RAG_DENSE: "false"
+          LUMI_MODEL_TIMEOUT: "1"
+        run: |
+          lumi-core serve --host 127.0.0.1 --port 8791 > "${RUNNER_TEMP}/lumi-core-fallback.log" 2>&1 &
+          CORE_PID=$!
+          cleanup() {
+            kill "$CORE_PID" >/dev/null 2>&1 || true
+            wait "$CORE_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          python - <<'PY'
+          import time
+          import httpx
+          deadline = time.time() + 20
+          while time.time() < deadline:
+              try:
+                  response = httpx.get("http://127.0.0.1:8791/ready", timeout=1)
+                  if response.status_code == 200 and response.json().get("ok") is True:
+                      raise SystemExit(0)
+              except Exception:
+                  pass
+              time.sleep(0.25)
+          raise SystemExit("Core did not become ready")
+          PY
+          python scripts/acceptance_local.py --base-url http://127.0.0.1:8791
+      - name: Primary-model + dense-embedding acceptance test
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          LUMI_DATA_DIR: ${{ runner.temp }}/lumi-e2e-primary
+          LUMI_OLLAMA_URL: http://127.0.0.1:11435/api/chat
+          LUMI_OLLAMA_EMBED_URL: http://127.0.0.1:11435/api/embed
+          LUMI_OLLAMA_MODEL: lumi-ci-model
+          LUMI_EMBEDDING_MODEL: lumi-ci-embed
+          LUMI_RAG_DENSE: "true"
+          LUMI_MODEL_TIMEOUT: "5"
+        run: |
+          python scripts/mock_ollama.py --port 11435 > "${RUNNER_TEMP}/mock-ollama.log" 2>&1 &
+          MOCK_PID=$!
+          lumi-core serve --host 127.0.0.1 --port 8792 > "${RUNNER_TEMP}/lumi-core-primary.log" 2>&1 &
+          CORE_PID=$!
+          cleanup() {
+            kill "$CORE_PID" "$MOCK_PID" >/dev/null 2>&1 || true
+            wait "$CORE_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          python - <<'PY'
+          import time
+          import httpx
+          deadline = time.time() + 20
+          while time.time() < deadline:
+              try:
+                  tags = httpx.get("http://127.0.0.1:11435/api/tags", timeout=1)
+                  ready = httpx.get("http://127.0.0.1:8792/ready", timeout=1)
+                  if tags.status_code == 200 and ready.status_code == 200 and ready.json().get("ok") is True:
+                      raise SystemExit(0)
+              except Exception:
+                  pass
+              time.sleep(0.25)
+          raise SystemExit("Primary acceptance services did not become ready")
+          PY
+          lumi-core doctor --require-model --require-database
+          python scripts/acceptance_local.py --base-url http://127.0.0.1:8792 --require-model
+      - name: Build Python distribution
+        if: matrix.os == 'ubuntu-latest'
+        run: python -m build services/core
+      - name: Import smoke
+        run: python -c "from lumi_core.api.main import app; print(app.title, app.version)"
+
+  macos-client:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Build native client
+        working-directory: apps/macos
+        run: swift build
+      - name: Test client transport models
+        working-directory: apps/macos
+        run: swift test
+      - name: Package local macOS app
+        run: |
+          bash scripts/build_macos_app.sh
+          test -d dist/Lumi.app
+          ls dist/Lumi-macOS-*.zip >/dev/null

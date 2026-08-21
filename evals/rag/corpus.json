@@ -1,0 +1,50 @@
+[
+  {
+    "key": "ducati",
+    "filename": "ducati-service.txt",
+    "title": "Ducati service note",
+    "text": "Ducati Monster service information. The engine oil drain plug tightening torque is 20 Nm. Replace the sealing washer during service and inspect the threads before installation."
+  },
+  {
+    "key": "surveying",
+    "filename": "surveying-field-note.txt",
+    "title": "Surveying field note",
+    "text": "Survey control procedure. The benchmark BM-17 has an elevation of 128.442 metres. Verify the backsight before transferring height to the construction point."
+  },
+  {
+    "key": "network",
+    "filename": "network-runbook.txt",
+    "title": "Network runbook",
+    "text": "Production web traffic uses HTTPS on TCP port 443. The reverse proxy terminates TLS and forwards requests to the internal application service."
+  },
+  {
+    "key": "finance",
+    "filename": "finance-policy.txt",
+    "title": "Finance policy",
+    "text": "Expense reimbursement policy. Receipts must be submitted within 30 calendar days after the business trip. Finance reviews complete claims before payment."
+  },
+  {
+    "key": "coffee",
+    "filename": "espresso-guide.txt",
+    "title": "Espresso guide",
+    "text": "Espresso preparation guide. Brew water should normally be between 92 and 96 degrees Celsius. A typical starting brew ratio is one part coffee to two parts beverage."
+  },
+  {
+    "key": "ukrainian",
+    "filename": "ukrainian-note.txt",
+    "title": "Українська нотатка",
+    "text": "Локальний помічник Lumi зберігає підтверджену пам'ять. Ключове слово перевірки — калина. Постійні записи пам'яті створюються лише після явного підтвердження користувача."
+  },
+  {
+    "key": "german",
+    "filename": "german-note.txt",
+    "title": "Deutsche Notiz",
+    "text": "Der lokale Lumi-Assistent verwendet eine Freigabe vor riskanten Aktionen. Das eindeutige Prüfwort lautet Rheinufer. Schreibende Aktionen benötigen eine ausdrückliche Bestätigung."
+  },
+  {
+    "key": "hungarian",
+    "filename": "hungarian-note.txt",
+    "title": "Magyar jegyzet",
+    "text": "A helyi Lumi asszisztens ellenőrzött eszközöket használ. Az egyedi tesztszó Duna-part. A kockázatos módosításokhoz kifejezett jóváhagyás szükséges."
+  }
+]
