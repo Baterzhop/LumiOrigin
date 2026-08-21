@@ -78,7 +78,7 @@ struct LumiSettingsView: View {
 
     private func testConnection() {
         isTesting = true
-        status = "Testing connection…"
+        status = "Testing connection and authentication…"
         Task {
             defer { isTesting = false }
             do {
@@ -89,9 +89,12 @@ struct LumiSettingsView: View {
                     apiKey: key.isEmpty ? LumiClientConfiguration.defaultAPIKey() : key
                 )
                 let health = try await client.health()
-                status = health.ok ? "Connection successful: Lumi Core \(health.version)." : "Core responded but did not report healthy."
+                let runtime = try await client.runtimeStatus()
+                status = health.ok && runtime.ok
+                    ? "Connection and authentication successful: Lumi Core \(health.version)."
+                    : "Core responded but did not report ready runtime state."
             } catch {
-                status = "Connection failed: \(error.localizedDescription)"
+                status = "Connection/authentication failed: \(error.localizedDescription)"
             }
         }
     }
