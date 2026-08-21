@@ -8,7 +8,7 @@ public struct LumiAcceptanceReport: Codable, Equatable, Sendable {
     public let chatModel: String?
     public let fallback: Bool
     public let streamEvents: [String]
-    public let repeatableProbe: Bool
+    public let temporaryStateCleaned: Bool
 
     enum CodingKeys: String, CodingKey {
         case ok
@@ -18,7 +18,7 @@ public struct LumiAcceptanceReport: Codable, Equatable, Sendable {
         case chatModel = "chat_model"
         case fallback
         case streamEvents = "stream_events"
-        case repeatableProbe = "repeatable_probe"
+        case temporaryStateCleaned = "temporary_state_cleaned"
     }
 }
 
