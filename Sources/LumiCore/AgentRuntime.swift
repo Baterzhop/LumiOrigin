@@ -6,6 +6,7 @@ public actor AgentRuntime {
     private let planner: any AgentPlanning
     private let tools: ToolRuntime
     private let store: any AgentRunStoring
+    private var eventSubscribers: [UUID: AsyncStream<AgentEvent>.Continuation] = [:]
 
     public init(
         planner: any AgentPlanning,
@@ -15,6 +16,22 @@ public actor AgentRuntime {
         self.planner = planner
         self.tools = tools
         self.store = store
+    }
+
+    /// Observes operational events from runs executed by this runtime, including runs started
+    /// through LumiEngine. The bounded buffer avoids an unbounded UI/diagnostics backlog.
+    public func events(bufferingNewest limit: Int = 128) -> AsyncStream<AgentEvent> {
+        let subscriberID = UUID()
+        let pair = AsyncStream<AgentEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(max(8, min(limit, 1_024)))
+        )
+        eventSubscribers[subscriberID] = pair.continuation
+        pair.continuation.onTermination = { @Sendable _ in
+            Task {
+                await self.removeEventSubscriber(subscriberID)
+            }
+        }
+        return pair.stream
     }
 
     public func start(
@@ -160,14 +177,14 @@ public actor AgentRuntime {
             throw AgentRuntimeError.invalidState("Pending call has no checkpointed agent step.")
         }
 
-        eventSink?(.runUpdated(run))
+        emit(.runUpdated(run), eventSink: eventSink)
 
         run = run.replacing(state: .executing)
         try await persist(run, eventSink: eventSink)
-        eventSink?(.toolStarted(runID: run.id, call: pending))
+        emit(.toolStarted(runID: run.id, call: pending), eventSink: eventSink)
 
         let result = await tools.execute(pending, confirmation: confirmation)
-        eventSink?(.toolFinished(runID: run.id, result: result))
+        emit(.toolFinished(runID: run.id, result: result), eventSink: eventSink)
 
         var steps = run.steps
         steps[lastIndex] = steps[lastIndex].replacing(result: result)
@@ -179,7 +196,7 @@ public actor AgentRuntime {
         try await persist(run, eventSink: eventSink)
 
         if result.status == .confirmationRequired {
-            eventSink?(.confirmationRequired(runID: run.id, call: pending))
+            emit(.confirmationRequired(runID: run.id, call: pending), eventSink: eventSink)
             return run
         }
         if result.status == .cancelled {
@@ -285,10 +302,10 @@ public actor AgentRuntime {
                 let startedAt = Date()
                 run = run.replacing(state: .executing, pendingCall: .some(call))
                 try await persist(run, eventSink: eventSink)
-                eventSink?(.toolStarted(runID: run.id, call: call))
+                emit(.toolStarted(runID: run.id, call: call), eventSink: eventSink)
 
                 let result = await tools.execute(call)
-                eventSink?(.toolFinished(runID: run.id, result: result))
+                emit(.toolFinished(runID: run.id, result: result), eventSink: eventSink)
 
                 let step = AgentStep(
                     index: run.steps.count + 1,
@@ -307,7 +324,7 @@ public actor AgentRuntime {
                         error: .some(nil)
                     )
                     try await persist(waiting, eventSink: eventSink)
-                    eventSink?(.confirmationRequired(runID: waiting.id, call: call))
+                    emit(.confirmationRequired(runID: waiting.id, call: call), eventSink: eventSink)
                     return waiting
                 }
 
@@ -350,10 +367,21 @@ public actor AgentRuntime {
             throw AgentRuntimeError.persistenceFailed(error.localizedDescription)
         }
 
-        eventSink?(.runUpdated(run))
+        emit(.runUpdated(run), eventSink: eventSink)
         if isTerminal(run.state) {
-            eventSink?(.terminal(run))
+            emit(.terminal(run), eventSink: eventSink)
         }
+    }
+
+    private func emit(_ event: AgentEvent, eventSink: EventSink?) {
+        eventSink?(event)
+        for continuation in eventSubscribers.values {
+            continuation.yield(event)
+        }
+    }
+
+    private func removeEventSubscriber(_ id: UUID) {
+        eventSubscribers.removeValue(forKey: id)
     }
 
     private func isTerminal(_ state: AgentRunState) -> Bool {
