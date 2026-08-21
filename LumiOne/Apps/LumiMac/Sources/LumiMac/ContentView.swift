@@ -12,6 +12,10 @@ struct ContentView: View {
                 Divider()
                 selectedFileBar
             }
+            if model.inspectedTable != nil {
+                Divider()
+                tablePanel
+            }
             if model.isMemoryAvailable {
                 Divider()
                 memoryPanel
@@ -56,6 +60,19 @@ struct ContentView: View {
             Spacer()
 
             Button {
+                model.selectSpreadsheetOutput()
+            } label: {
+                Label("New Table Output…", systemImage: "tablecells.badge.ellipsis")
+            }
+            .disabled(
+                model.isSafeMode ||
+                model.isSending ||
+                model.indexingResourceID != nil ||
+                model.inspectingResourceID != nil ||
+                model.pendingApproval != nil
+            )
+
+            Button {
                 model.selectFile()
             } label: {
                 Label("Select File…", systemImage: "doc.badge.plus")
@@ -64,6 +81,7 @@ struct ContentView: View {
                 model.isSafeMode ||
                 model.isSending ||
                 model.indexingResourceID != nil ||
+                model.inspectingResourceID != nil ||
                 model.pendingApproval != nil
             )
         }
@@ -79,9 +97,28 @@ struct ContentView: View {
 
                 ForEach(model.selectedFiles, id: \.id) { descriptor in
                     HStack(spacing: 6) {
-                        Image(systemName: "doc.text")
+                        Image(systemName: model.canInspectSpreadsheet(descriptor) ? "tablecells" : "doc.text")
                         Text(descriptor.displayName)
                             .lineLimit(1)
+
+                        if model.isSpreadsheetOutput(descriptor) {
+                            Text("OUTPUT")
+                                .font(.caption2.monospaced())
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if model.inspectingResourceID == descriptor.id {
+                            ProgressView()
+                                .controlSize(.small)
+                                .help("Inspecting this table")
+                        } else if model.canInspectSpreadsheet(descriptor) && !model.isSpreadsheetOutput(descriptor) {
+                            Button("Inspect") {
+                                model.inspectSpreadsheet(descriptor)
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(model.isSending || model.pendingApproval != nil)
+                        }
 
                         if model.indexingResourceID == descriptor.id {
                             ProgressView()
@@ -106,7 +143,7 @@ struct ContentView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Remove this file from Lumi")
-                        .disabled(model.indexingResourceID != nil)
+                        .disabled(model.indexingResourceID != nil || model.inspectingResourceID != nil)
                     }
                     .font(.caption)
                     .padding(.horizontal, 9)
@@ -116,6 +153,46 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
+        }
+    }
+
+    private var tablePanel: some View {
+        Group {
+            if let table = model.inspectedTable {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Label("Table Preview", systemImage: "tablecells")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Text("\(table.displayName) · \(table.rowCount) rows × \(table.columnCount) columns")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if table.previewTruncated {
+                            Text("bounded preview")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal)
+
+                    ScrollView(.horizontal, showsIndicators: true) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(table.columns.map(\.name).joined(separator: "  │  "))
+                                .font(.caption.monospaced())
+                                .fontWeight(.semibold)
+                            ForEach(table.preview, id: \.rowIndex) { row in
+                                Text(row.values.joined(separator: "  │  "))
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.bottom, 8)
+                    }
+                }
+                .padding(.top, 8)
+            }
         }
     }
 
@@ -263,6 +340,9 @@ struct ContentView: View {
             if pending.permission.resource.kind == .userMemory {
                 memoryPermissionDetails(pending)
             }
+            if pending.permission.details["operation"] == "spreadsheet.writeMutation" {
+                spreadsheetPermissionDetails(pending)
+            }
 
             Text("Capability: \(pending.permission.capability.rawValue)")
                 .font(.caption)
@@ -341,6 +421,53 @@ struct ContentView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
             }
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func spreadsheetPermissionDetails(_ pending: PendingToolApproval) -> some View {
+        let details = pending.permission.details
+
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Previewed spreadsheet write")
+                .font(.caption)
+                .fontWeight(.semibold)
+
+            if let rows = details["rows"], let columns = details["columns"] {
+                Text("Output size: \(rows) rows × \(columns) columns")
+                    .font(.caption)
+            }
+            if let names = details["columnNames"] {
+                Text("Columns: \(names)")
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
+            if let source = details["sourceResourceID"] {
+                Text("Source resource: \(source)")
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+            }
+            if let output = details["outputResourceID"] {
+                Text("Output resource: \(output)")
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+            }
+            if let overwrite = details["overwritePolicy"] {
+                Text("Overwrite policy: \(overwrite)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            if let defense = details["formulaInjectionDefense"] {
+                Text("Formula-injection defense: \(defense)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("The write is bound to this exact ephemeral preview plan and is approved once only.")
+                .font(.caption)
+                .fontWeight(.semibold)
         }
         .padding(8)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))

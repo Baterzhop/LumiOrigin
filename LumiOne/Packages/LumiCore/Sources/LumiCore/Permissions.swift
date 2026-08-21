@@ -24,12 +24,12 @@ public enum ToolCapability: String, Codable, Sendable {
     case systemCommand
     case modifyCode
 
-    /// Persistent personal-memory mutation is always approved per operation.
-    /// A session-scoped grant would otherwise authorize later model-proposed
-    /// value changes for the same logical key without another user decision.
+    /// Persistent personal-memory mutation and user-file mutation are always
+    /// approved per exact operation. A session grant would otherwise let a
+    /// later model proposal reuse authority to change durable user data.
     public var supportsSessionGrant: Bool {
         switch self {
-        case .writeUserMemory, .deleteUserMemory:
+        case .writeUserFile, .writeUserMemory, .deleteUserMemory:
             return false
         default:
             return true
@@ -87,8 +87,8 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
     public let resourceLocationHint: String?
     /// Code-owned structured operation details. They are available to the
     /// approval UI and are also part of authorization matching. This prevents a
-    /// grant for one exact mutation (for example memory value A) from silently
-    /// authorizing a different mutation on the same resource (memory value B).
+    /// grant for one exact mutation from silently authorizing a different one on
+    /// the same resource.
     public let details: [String: String]
 
     public init(

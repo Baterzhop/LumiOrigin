@@ -51,6 +51,48 @@ final class SecurityScopedFileCatalogTests: XCTestCase {
         XCTAssertEqual(catalog.allDescriptors().count, 1)
     }
 
+    func testRegisteredEmptyOutputCanBeWrittenOnceButNotOverwritten() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LumiFileCatalogWrite-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let outputURL = root.appendingPathComponent("output.csv")
+        XCTAssertTrue(FileManager.default.createFile(atPath: outputURL.path, contents: Data()))
+        let catalog = try SecurityScopedFileCatalog(
+            storeURL: root.appendingPathComponent("catalog.json")
+        )
+        let output = try catalog.register(url: outputURL)
+
+        let first = try await catalog.writeText(
+            resourceID: output.id,
+            content: "name,value\r\nA,1\r\n",
+            requireEmpty: true
+        )
+        XCTAssertEqual(first.descriptor.id, output.id)
+        XCTAssertEqual(first.byteCount, "name,value\r\nA,1\r\n".utf8.count)
+
+        let read = try await catalog.readText(resourceID: output.id, maxBytes: 1024)
+        XCTAssertEqual(read.content, "name,value\r\nA,1\r\n")
+
+        do {
+            _ = try await catalog.writeText(
+                resourceID: output.id,
+                content: "malicious overwrite",
+                requireEmpty: true
+            )
+            XCTFail("Phase 8 output resources must not be silently overwritten")
+        } catch let error as UserFileAccessError {
+            guard case .outputNotEmpty(let id) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(id, output.id)
+        }
+
+        let after = try await catalog.readText(resourceID: output.id, maxBytes: 1024)
+        XCTAssertEqual(after.content, "name,value\r\nA,1\r\n")
+    }
+
     func testUnknownResourceFailsClosed() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("LumiFileCatalogUnknown-\(UUID().uuidString)", isDirectory: true)

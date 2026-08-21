@@ -59,6 +59,16 @@ public struct UserFileTextRead: Equatable, Sendable {
     }
 }
 
+public struct UserFileTextWrite: Equatable, Sendable {
+    public let descriptor: UserFileDescriptor
+    public let byteCount: Int
+
+    public init(descriptor: UserFileDescriptor, byteCount: Int) {
+        self.descriptor = descriptor
+        self.byteCount = byteCount
+    }
+}
+
 public protocol UserFileAccessBroker: Sendable {
     /// Returns trusted metadata only for resources explicitly registered by the host app.
     func descriptor(for id: UserFileResourceID) throws -> UserFileDescriptor
@@ -71,12 +81,28 @@ public protocol UserFileAccessBroker: Sendable {
     ) async throws -> UserFileTextRead
 }
 
+/// Separate mutation boundary. Read-only brokers do not automatically gain write
+/// authority. A host must deliberately provide an implementation for user-file writes.
+public protocol UserFileWriteBroker: Sendable {
+    func descriptor(for id: UserFileResourceID) throws -> UserFileDescriptor
+
+    /// Writes UTF-8 text only to a previously registered output resource. Phase 8
+    /// requires `requireEmpty == true`, preventing silent overwrite of an existing file.
+    func writeText(
+        resourceID: UserFileResourceID,
+        content: String,
+        requireEmpty: Bool
+    ) async throws -> UserFileTextWrite
+}
+
 public enum UserFileAccessError: Error, CustomStringConvertible, Sendable {
     case unknownResource(UserFileResourceID)
     case invalidLimit
     case notUTF8
     case accessDenied(UserFileResourceID)
     case resourceUnavailable(UserFileResourceID)
+    case outputNotEmpty(UserFileResourceID)
+    case writeFailed(UserFileResourceID, String)
 
     public var description: String {
         switch self {
@@ -90,6 +116,10 @@ public enum UserFileAccessError: Error, CustomStringConvertible, Sendable {
             return "Access to user-file resource \(id.rawValue) was denied by the platform."
         case .resourceUnavailable(let id):
             return "User-file resource \(id.rawValue) is no longer available."
+        case .outputNotEmpty(let id):
+            return "Output user-file resource \(id.rawValue) is not empty; Lumi will not overwrite it."
+        case .writeFailed(let id, let detail):
+            return "Writing user-file resource \(id.rawValue) failed: \(detail)"
         }
     }
 }
