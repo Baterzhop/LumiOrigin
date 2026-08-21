@@ -7,9 +7,15 @@ struct LumiOneApp: App {
 
     var body: some Scene {
         WindowGroup("Lumi One") {
-            ContentView()
-                .environmentObject(model)
-                .frame(minWidth: 760, minHeight: 560)
+            VStack(spacing: 0) {
+                if model.isTaskAvailable {
+                    TaskPanel()
+                    Divider()
+                }
+                ContentView()
+            }
+            .environmentObject(model)
+            .frame(minWidth: 860, minHeight: 700)
         }
     }
 }
