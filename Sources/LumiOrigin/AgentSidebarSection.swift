@@ -6,58 +6,62 @@ struct AgentSidebarSection: View {
     @ObservedObject var model: ChatViewModel
 
     var body: some View {
-        Section("Agent Runtime") {
-            TextField("Goal for Agent…", text: $model.agentGoal, axis: .vertical)
-                .lineLimit(2...5)
+        Group {
+            Section("Agent Runtime") {
+                TextField("Goal for Agent…", text: $model.agentGoal, axis: .vertical)
+                    .lineLimit(2...5)
 
-            HStack {
-                Button {
-                    model.startAgent()
-                } label: {
-                    Label("Run Agent", systemImage: "play.circle")
-                }
-                .disabled(
-                    model.agentGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || model.isAgentRunning
-                    || model.isSending
-                )
+                HStack {
+                    Button {
+                        model.startAgent()
+                    } label: {
+                        Label("Run Agent", systemImage: "play.circle")
+                    }
+                    .disabled(
+                        model.agentGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || model.isAgentRunning
+                        || model.isSending
+                    )
 
-                if model.isAgentRunning {
-                    ProgressView().controlSize(.small)
-                    Button("Stop") { model.cancelActiveAgent() }
-                }
-            }
-
-            if let activity = model.agentActivity, !activity.isEmpty {
-                Label(activity, systemImage: "waveform.path")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let run = model.activeAgentRun {
-                runSummary(run)
-            }
-
-            if !model.recentAgentRuns.isEmpty {
-                DisclosureGroup("Recent runs") {
-                    ForEach(model.recentAgentRuns.prefix(5)) { run in
-                        Button {
-                            model.selectAgentRun(run)
-                        } label: {
-                            HStack {
-                                Text(run.goal)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(run.state.rawValue)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .buttonStyle(.plain)
+                    if model.isAgentRunning {
+                        ProgressView().controlSize(.small)
+                        Button("Stop") { model.cancelActiveAgent() }
                     }
                 }
-                .font(.caption)
+
+                if let activity = model.agentActivity, !activity.isEmpty {
+                    Label(activity, systemImage: "waveform.path")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let run = model.activeAgentRun {
+                    runSummary(run)
+                }
+
+                if !model.recentAgentRuns.isEmpty {
+                    DisclosureGroup("Recent runs") {
+                        ForEach(model.recentAgentRuns.prefix(5)) { run in
+                            Button {
+                                model.selectAgentRun(run)
+                            } label: {
+                                HStack {
+                                    Text(run.goal)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text(run.state.rawValue)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .font(.caption)
+                }
             }
+
+            KnowledgeSidebarSection()
         }
     }
 
