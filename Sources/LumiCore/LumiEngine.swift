@@ -9,6 +9,7 @@ public actor LumiEngine {
     public let knowledge: any KnowledgeRetrieving
     public let toolRuntime: ToolRuntime?
     public let agentRuntime: AgentRuntime?
+    public let telemetry: RuntimeTelemetry?
     public let conversationID: UUID
 
     private let classifier: any RequestClassifying
@@ -34,6 +35,7 @@ public actor LumiEngine {
         conversationStore: any ConversationStore = InMemoryConversationStore(),
         toolRuntime: ToolRuntime? = nil,
         agentRuntime: AgentRuntime? = nil,
+        telemetry: RuntimeTelemetry? = nil,
         conversationID: UUID = LumiEngine.defaultConversationID,
         contextManager: ContextBudgetManager = ContextBudgetManager(),
         citationAssembler: CitationAssembler = CitationAssembler()
@@ -49,6 +51,7 @@ public actor LumiEngine {
         self.conversationStore = conversationStore
         self.toolRuntime = toolRuntime
         self.agentRuntime = agentRuntime
+        self.telemetry = telemetry
         self.conversationID = conversationID
         self.contextManager = contextManager
         self.citationAssembler = citationAssembler
@@ -59,6 +62,7 @@ public actor LumiEngine {
     }
 
     public func respond(_ request: LumiRequest) async -> LumiReply {
+        let startedAt = Date()
         let prepared = await prepare(request)
 
         let completion: ModelResponse
@@ -82,6 +86,9 @@ public actor LumiEngine {
 
         return await finalize(
             completion: completion,
+            requestID: request.id,
+            requestCreatedAt: request.createdAt,
+            startedAt: startedAt,
             input: prepared.cleanInput,
             intent: prepared.intent,
             classification: prepared.classification,
@@ -100,11 +107,15 @@ public actor LumiEngine {
     }
 
     public func streamRespond(_ request: LumiRequest) async -> AsyncThrowingStream<LumiStreamEvent, Error> {
+        let startedAt = Date()
         let prepared = await prepare(request)
 
         if !prepared.contextBudget.fits {
             let reply = await finalize(
                 completion: contextOverflowResponse(prepared.contextBudget),
+                requestID: request.id,
+                requestCreatedAt: request.createdAt,
+                startedAt: startedAt,
                 input: prepared.cleanInput,
                 intent: prepared.intent,
                 classification: prepared.classification,
@@ -133,6 +144,9 @@ public actor LumiEngine {
                         case .completed(let completion):
                             let reply = await self.finalize(
                                 completion: completion,
+                                requestID: request.id,
+                                requestCreatedAt: request.createdAt,
+                                startedAt: startedAt,
                                 input: prepared.cleanInput,
                                 intent: prepared.intent,
                                 classification: prepared.classification,
@@ -190,8 +204,23 @@ public actor LumiEngine {
         storageIssue
     }
 
+    public func recentRuntimeTraces(limit: Int = 100) async -> [RuntimeTrace] {
+        guard let telemetry else { return [] }
+        return await telemetry.recent(limit: limit)
+    }
+
+    public func runtimeTelemetryIssue() async -> String? {
+        guard let telemetry else { return nil }
+        return await telemetry.issue()
+    }
+
+    public func clearRuntimeTraces() async {
+        guard let telemetry else { return }
+        await telemetry.clear()
+    }
+
     /// Clears only the durable conversation transcript and bounded working buffer.
-    /// Long-term memory and agent-run history have independent lifecycles.
+    /// Long-term memory, agent-run history and metadata-only telemetry have independent lifecycles.
     public func clearConversation() async {
         await memory.clear()
         await reflections.clear()
@@ -414,6 +443,9 @@ public actor LumiEngine {
 
     private func finalize(
         completion: ModelResponse,
+        requestID: UUID,
+        requestCreatedAt: Date,
+        startedAt: Date,
         input: String,
         intent: LumiIntent,
         classification: RequestClassification,
@@ -426,7 +458,7 @@ public actor LumiEngine {
         await reflections.record(input: input, intent: intent, response: completion.content)
         let citationReport = citationAssembler.assemble(response: completion.content, evidence: context)
 
-        return LumiReply(
+        let reply = LumiReply(
             message: assistant,
             intent: intent,
             classification: classification,
@@ -437,6 +469,36 @@ public actor LumiEngine {
             contextBudget: contextBudget,
             citationReport: citationReport
         )
+
+        if let telemetry {
+            let trace = RuntimeTrace(
+                requestID: requestID,
+                conversationID: conversationID,
+                createdAt: requestCreatedAt,
+                durationMs: Int(Date().timeIntervalSince(startedAt) * 1_000),
+                outcome: traceOutcome(runtime: completion.runtime, contextBudget: contextBudget),
+                classification: classification,
+                profile: profile.name,
+                runtime: completion.runtime,
+                contextBudget: contextBudget,
+                citationReport: citationReport
+            )
+            await telemetry.record(trace)
+        }
+
+        return reply
+    }
+
+    private func traceOutcome(
+        runtime: RuntimeMetadata,
+        contextBudget: ContextBudgetReport
+    ) -> RuntimeTraceOutcome {
+        if !contextBudget.fits { return .contextOverflow }
+        switch runtime.finishReason {
+        case .cancelled: return .cancelled
+        case .error: return .modelError
+        case .stop, .length, .unknown: return .completed
+        }
     }
 
     private func profileWithCapabilityBoundary(
