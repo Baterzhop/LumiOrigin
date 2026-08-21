@@ -65,6 +65,34 @@ public actor TaskRunner {
         return try await startReadyTask(ready)
     }
 
+    /// Explicit user cancellation. If the active run is suspended inside
+    /// AgentRuntime, its process-local continuation is discarded first. No grant
+    /// is created and the model is not resumed after cancellation.
+    public func cancel(
+        taskID: TaskID,
+        expectedRevision: Int,
+        reason: String? = "Cancelled by user"
+    ) async throws -> TaskRecord {
+        guard let current = try await tasks.load(id: taskID) else {
+            throw TaskRunnerError.taskNotFound(taskID)
+        }
+        try Self.validateRevision(current, expected: expectedRevision)
+
+        if let session = active, session.taskID == taskID {
+            if let pendingID = session.pendingApprovalID {
+                _ = await runtime.abandonPendingPermission(pendingID: pendingID)
+            }
+            active = nil
+        }
+
+        return try await tasks.cancel(
+            id: taskID,
+            expectedRevision: current.revision,
+            actor: .user,
+            reason: reason
+        )
+    }
+
     public func approvePermission(
         taskID: TaskID,
         pendingID: UUID,
@@ -366,16 +394,22 @@ public actor TaskRunner {
     }
 
     /// Direct UI cancellation may occur outside TaskRunner through TaskService.
-    /// Normalize that state before accepting new work so a cancelled task cannot
-    /// keep the single-runner slot forever.
+    /// Normalize that state before accepting new work so a terminal task cannot
+    /// keep the single-runner slot or an orphaned permission continuation.
     private func normalizeInactiveTerminalSession() async throws {
         guard let active else { return }
         guard let current = try await tasks.load(id: active.taskID) else {
+            if let pendingID = active.pendingApprovalID {
+                _ = await runtime.abandonPendingPermission(pendingID: pendingID)
+            }
             self.active = nil
             return
         }
         switch current.state {
         case .cancelled, .succeeded, .failed, .interrupted:
+            if let pendingID = active.pendingApprovalID {
+                _ = await runtime.abandonPendingPermission(pendingID: pendingID)
+            }
             self.active = nil
         case .draft, .ready, .running, .waitingForPermission:
             break
