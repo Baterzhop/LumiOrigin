@@ -29,7 +29,8 @@ public struct LLMAgentPlanner: AgentPlanning, Sendable {
                 ModelRequest(
                     messages: [ChatMessage(role: .user, content: userPrompt)],
                     systemPrompt: systemPrompt,
-                    profile: profile
+                    profile: profile,
+                    role: .agentPlanner
                 )
             )
         } catch {
