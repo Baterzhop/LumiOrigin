@@ -8,10 +8,7 @@ struct LumiDesktopApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .task {
-                    await coreManager.ensureRunning()
-                }
+            LumiRootView(coreManager: coreManager)
         }
         .windowStyle(.automatic)
         .commands {
