@@ -79,7 +79,8 @@ final class SpreadsheetAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(output.contains("'=PRIVATE-CELL+1"))
         XCTAssertTrue(output.contains("Bob,2"))
 
-        let capturedPlanToken = try XCTUnwrap(await model.planToken())
+        let maybePlanToken = await model.planToken()
+        let capturedPlanToken = try XCTUnwrap(maybePlanToken)
         XCTAssertFalse(capturedPlanToken.isEmpty)
 
         let durable = try await conversations.loadConversation(id: conversationID)
