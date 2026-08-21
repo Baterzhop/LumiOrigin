@@ -70,6 +70,16 @@ public enum ModelProvider: String, Codable, Sendable, Hashable {
     case unknown
 }
 
+/// Generation roles are semantic routing hints, not provider/model names.
+/// Embeddings remain on the separate EmbeddingProvider contract because they have a different request/response shape.
+public enum ModelRole: String, Codable, Sendable, CaseIterable, Hashable {
+    case chat
+    case knowledge
+    case coding
+    case reflection
+    case agentPlanner
+}
+
 public enum ModelFinishReason: String, Codable, Sendable, Hashable {
     case stop
     case length
@@ -92,21 +102,25 @@ public struct ModelRequest: Codable, Hashable, Sendable {
     public let messages: [ChatMessage]
     public let systemPrompt: String
     public let profile: PromptProfile
+    public let role: ModelRole?
 
     public init(
         messages: [ChatMessage],
         systemPrompt: String,
-        profile: PromptProfile
+        profile: PromptProfile,
+        role: ModelRole? = nil
     ) {
         self.messages = messages
         self.systemPrompt = systemPrompt
         self.profile = profile
+        self.role = role
     }
 }
 
 public struct RuntimeMetadata: Codable, Hashable, Sendable {
     public let provider: ModelProvider
     public let model: String
+    public let modelRole: ModelRole?
     public let fallbackUsed: Bool
     public let latencyMs: Int?
     public let finishReason: ModelFinishReason
@@ -115,6 +129,7 @@ public struct RuntimeMetadata: Codable, Hashable, Sendable {
     public init(
         provider: ModelProvider,
         model: String,
+        modelRole: ModelRole? = nil,
         fallbackUsed: Bool = false,
         latencyMs: Int? = nil,
         finishReason: ModelFinishReason = .unknown,
@@ -122,6 +137,7 @@ public struct RuntimeMetadata: Codable, Hashable, Sendable {
     ) {
         self.provider = provider
         self.model = model
+        self.modelRole = modelRole
         self.fallbackUsed = fallbackUsed
         self.latencyMs = latencyMs
         self.finishReason = finishReason
