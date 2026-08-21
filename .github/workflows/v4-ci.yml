@@ -115,6 +115,12 @@ jobs:
       - name: Build Python distribution
         if: matrix.os == 'ubuntu-latest'
         run: python -m build services/core
+      - name: Verify Python artifact checksums
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd services/core/dist
+          sha256sum lumi_core-* > SHA256SUMS
+          sha256sum -c SHA256SUMS
       - name: Wheel install smoke in clean environment
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -138,13 +144,16 @@ jobs:
       - name: Test client transport and configuration models
         working-directory: apps/macos
         run: swift test
-      - name: Package local macOS app
+      - name: Package local macOS app and verify checksum
         run: |
           bash scripts/build_macos_app.sh
           test -d dist/Lumi.app
           plutil -lint dist/Lumi.app/Contents/Info.plist
           codesign --verify --deep --strict dist/Lumi.app
-          ls dist/Lumi-macOS-4.0.0rc2.zip >/dev/null
+          test -f dist/Lumi-macOS-4.0.0rc3.zip
+          cd dist
+          shasum -a 256 Lumi-macOS-4.0.0rc3.zip > Lumi-macOS-4.0.0rc3.zip.sha256
+          shasum -a 256 -c Lumi-macOS-4.0.0rc3.zip.sha256
 
   macos-install-smoke:
     runs-on: macos-14
