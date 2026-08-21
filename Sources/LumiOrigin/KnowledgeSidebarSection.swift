@@ -7,6 +7,15 @@ struct KnowledgeSidebarSection: View {
     @StateObject private var model = KnowledgeLibraryViewModel()
     @State private var isImporterPresented = false
 
+    private var allowedImportTypes: [UTType] {
+        [
+            .plainText,
+            UTType(filenameExtension: "md") ?? .plainText,
+            UTType(filenameExtension: "markdown") ?? .plainText,
+            .pdf
+        ]
+    }
+
     var body: some View {
         Section("Knowledge Library") {
             HStack {
@@ -92,7 +101,7 @@ struct KnowledgeSidebarSection: View {
         }
         .fileImporter(
             isPresented: $isImporterPresented,
-            allowedContentTypes: [.plainText, .markdown, .pdf],
+            allowedContentTypes: allowedImportTypes,
             allowsMultipleSelection: true
         ) { result in
             switch result {
