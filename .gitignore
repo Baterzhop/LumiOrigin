@@ -21,6 +21,10 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.lumi-runtime/
+
+# Build / release output
+dist/
 
 # Lumi local runtime state and secrets
 .env

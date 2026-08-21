@@ -1,0 +1,37 @@
+name: Lumi V4 Alpha Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v4.*"
+
+jobs:
+  package-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ad-hoc macOS alpha app
+        run: bash scripts/build_macos_app.sh dist
+      - name: Upload macOS alpha package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lumi-macOS-alpha
+          path: dist/Lumi-macOS-alpha.zip
+          if-no-files-found: error
+
+  package-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble reproducible-install source bundle
+        run: |
+          mkdir -p dist/core-bundle
+          cp -R services requirements scripts/install_lumi.sh scripts/start_lumi.sh scripts/backup_lumi.py docs/release.md .env.example dist/core-bundle/
+          tar -C dist -czf dist/Lumi-Core-alpha-source.tar.gz core-bundle
+      - name: Upload Core bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lumi-Core-alpha-source
+          path: dist/Lumi-Core-alpha-source.tar.gz
+          if-no-files-found: error

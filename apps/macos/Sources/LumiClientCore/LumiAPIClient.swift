@@ -21,14 +21,15 @@ public struct LumiAPIClient: Sendable {
     public let baseURL: URL
     public let apiKey: String?
 
-    public init(baseURL: URL = URL(string: "http://127.0.0.1:8790")!, apiKey: String? = nil) {
-        self.baseURL = baseURL
+    public init(baseURL: URL? = nil, apiKey: String? = nil) {
+        self.baseURL = baseURL ?? LumiClientConfiguration.baseURL()
         if let apiKey, !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let environmentKey = ProcessInfo.processInfo.environment["LUMI_API_KEY"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !environmentKey.isEmpty {
+            self.apiKey = environmentKey
         } else {
-            let environmentKey = ProcessInfo.processInfo.environment["LUMI_API_KEY"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            self.apiKey = environmentKey?.isEmpty == false ? environmentKey : nil
+            self.apiKey = try? LumiClientConfiguration.storedAPIKey()
         }
     }
 

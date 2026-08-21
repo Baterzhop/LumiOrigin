@@ -17,21 +17,32 @@ jobs:
         os: [ubuntu-latest, macos-14]
         python: ["3.12"]
     runs-on: ${{ matrix.os }}
+    env:
+      LUMI_DATA_DIR: ${{ runner.temp }}/lumi-ci
+      LUMI_DATABASE_PATH: ${{ runner.temp }}/lumi-ci/lumi.sqlite3
+      LUMI_BACKUP_DIR: ${{ runner.temp }}/lumi-ci/backups
+      LUMI_TOOL_WORKSPACE: ${{ runner.temp }}/lumi-ci/workspace
+      LUMI_RAG_DENSE: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install
-        run: python -m pip install -e "services/core[dev]"
+      - name: Install locked direct dependencies
+        run: python -m pip install -c requirements/constraints-py312.txt -e "services/core[dev]"
       - name: Unit and API integration tests
         run: pytest services/core/tests -q
+      - name: Operational CLI smoke
+        run: lumi-core doctor --initialize --skip-model --json
       - name: Deterministic RAG regression gate
         if: matrix.os == 'ubuntu-latest'
         run: python scripts/eval_rag.py --assert-thresholds
       - name: Deterministic memory regression gate
         if: matrix.os == 'ubuntu-latest'
         run: python scripts/eval_memory.py --assert-thresholds
+      - name: Deterministic local Core acceptance
+        if: matrix.os == 'ubuntu-latest'
+        run: python scripts/acceptance_local.py
       - name: Import smoke
         run: python -c "from lumi_core.api.main import app; print(app.title, app.version)"
 
@@ -47,3 +58,10 @@ jobs:
       - name: Test client transport models
         working-directory: apps/macos
         run: swift test
+      - name: Build ad-hoc alpha app bundle
+        run: bash scripts/build_macos_app.sh dist
+      - name: Verify alpha package
+        run: |
+          test -d dist/Lumi.app
+          test -f dist/Lumi-macOS-alpha.zip
+          codesign --verify --deep --strict dist/Lumi.app

@@ -13,6 +13,10 @@ struct LumiDesktopApp: App {
             }
         }
 
+        Settings {
+            ConnectionSettingsView()
+        }
+
         Window("Lumi Developer Agent", id: "developer-agent") {
             DeveloperAgentView()
         }

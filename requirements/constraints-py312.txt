@@ -1,0 +1,10 @@
+# Lumi V4 alpha direct-dependency constraints for CPython 3.12.
+# Transitive dependencies remain resolver-managed; CI verifies this set on Ubuntu and macOS.
+fastapi==0.141.1
+uvicorn==0.52.1
+pydantic==2.13.4
+httpx==0.28.1
+python-multipart==0.0.32
+pypdf==6.15.0
+pytest==8.4.2
+pytest-asyncio==0.26.0
