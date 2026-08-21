@@ -161,32 +161,97 @@ public actor SQLiteConversationStore: ConversationStore {
         defer { sqlite3_finalize(statement) }
         try bind(conversationID.uuidString, index: 1, statement: statement, db: db)
 
-        var messages: [ChatMessage] = []
+        var result: [ChatMessage] = []
         while true {
             let status = sqlite3_step(statement)
             if status == SQLITE_DONE { break }
             guard status == SQLITE_ROW else {
                 throw ConversationStoreError.statementFailed(message(db))
             }
-
-            guard
-                let idText = text(statement, 0),
-                let id = UUID(uuidString: idText),
-                let roleText = text(statement, 1),
-                let role = ChatRole(rawValue: roleText),
-                let content = text(statement, 2)
-            else { continue }
-
-            messages.append(
-                ChatMessage(
-                    id: id,
-                    role: role,
-                    content: content,
-                    timestamp: Date(timeIntervalSince1970: sqlite3_column_double(statement, 3))
-                )
-            )
+            if let chatMessage = decodeMessage(statement) {
+                result.append(chatMessage)
+            }
         }
-        return messages
+        return result
+    }
+
+    public func loadTranscriptPage(
+        conversationID: UUID,
+        before cursor: ConversationTranscriptCursor?,
+        limit: Int
+    ) throws -> ConversationTranscriptPage {
+        let finalLimit = max(1, min(limit, 500))
+        let db = try openIfNeeded()
+
+        let sql: String
+        if cursor == nil {
+            sql = """
+            SELECT id, role, content, timestamp
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY timestamp DESC, rowid DESC
+            LIMIT ?;
+            """
+        } else {
+            sql = """
+            SELECT id, role, content, timestamp
+            FROM messages
+            WHERE conversation_id = ?
+              AND (
+                    timestamp < ?
+                    OR (
+                        timestamp = ?
+                        AND rowid < COALESCE((SELECT rowid FROM messages WHERE id = ?), 9223372036854775807)
+                    )
+                  )
+            ORDER BY timestamp DESC, rowid DESC
+            LIMIT ?;
+            """
+        }
+
+        let statement = try prepare(sql, db: db)
+        defer { sqlite3_finalize(statement) }
+        try bind(conversationID.uuidString, index: 1, statement: statement, db: db)
+
+        if let cursor {
+            guard
+                sqlite3_bind_double(statement, 2, cursor.timestamp.timeIntervalSince1970) == SQLITE_OK,
+                sqlite3_bind_double(statement, 3, cursor.timestamp.timeIntervalSince1970) == SQLITE_OK
+            else { throw ConversationStoreError.statementFailed(message(db)) }
+            try bind(cursor.messageID.uuidString, index: 4, statement: statement, db: db)
+            guard sqlite3_bind_int(statement, 5, Int32(finalLimit + 1)) == SQLITE_OK else {
+                throw ConversationStoreError.statementFailed(message(db))
+            }
+        } else {
+            guard sqlite3_bind_int(statement, 2, Int32(finalLimit + 1)) == SQLITE_OK else {
+                throw ConversationStoreError.statementFailed(message(db))
+            }
+        }
+
+        var descending: [ChatMessage] = []
+        while true {
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { break }
+            guard status == SQLITE_ROW else {
+                throw ConversationStoreError.statementFailed(message(db))
+            }
+            if let chatMessage = decodeMessage(statement) {
+                descending.append(chatMessage)
+            }
+        }
+
+        let hasOlder = descending.count > finalLimit
+        if hasOlder { descending.removeLast(descending.count - finalLimit) }
+        let chronological = Array(descending.reversed())
+        let olderCursor = hasOlder ? chronological.first.map {
+            ConversationTranscriptCursor(timestamp: $0.timestamp, messageID: $0.id)
+        } : nil
+
+        return ConversationTranscriptPage(
+            messages: chronological,
+            olderCursor: olderCursor,
+            hasOlder: hasOlder
+        )
     }
 
     public func append(_ chatMessage: ChatMessage, conversationID: UUID) throws {
@@ -352,6 +417,23 @@ public actor SQLiteConversationStore: ConversationStore {
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 2)),
             updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 3)),
             messageCount: Int(sqlite3_column_int64(statement, 4))
+        )
+    }
+
+    private func decodeMessage(_ statement: OpaquePointer) -> ChatMessage? {
+        guard
+            let idText = text(statement, 0),
+            let id = UUID(uuidString: idText),
+            let roleText = text(statement, 1),
+            let role = ChatRole(rawValue: roleText),
+            let content = text(statement, 2)
+        else { return nil }
+
+        return ChatMessage(
+            id: id,
+            role: role,
+            content: content,
+            timestamp: Date(timeIntervalSince1970: sqlite3_column_double(statement, 3))
         )
     }
 
