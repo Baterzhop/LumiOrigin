@@ -19,6 +19,8 @@ struct LumiDesktopApp: App {
                 Button("Restart managed Lumi Core") {
                     Task { await coreManager.restart() }
                 }
+                Divider()
+                OpenDiagnosticsCommand()
             }
             CommandMenu("Developer") {
                 OpenDeveloperAgentCommand()
@@ -28,6 +30,11 @@ struct LumiDesktopApp: App {
         Settings {
             LumiSettingsView()
         }
+
+        Window("Lumi Diagnostics", id: "diagnostics") {
+            LumiDiagnosticsView(coreManager: coreManager)
+        }
+        .defaultSize(width: 760, height: 560)
 
         Window("Lumi Developer Agent", id: "developer-agent") {
             DeveloperAgentView()
@@ -40,6 +47,17 @@ struct LumiDesktopApp: App {
 private final class LumiApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         CoreProcessManager.shared.stopManagedCore()
+    }
+}
+
+private struct OpenDiagnosticsCommand: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Open Diagnostics…") {
+            openWindow(id: "diagnostics")
+        }
+        .keyboardShortcut("i", modifiers: [.command, .shift])
     }
 }
 
