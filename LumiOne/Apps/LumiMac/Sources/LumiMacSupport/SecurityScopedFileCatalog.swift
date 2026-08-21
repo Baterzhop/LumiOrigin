@@ -1,7 +1,7 @@
 import Foundation
 import LumiCore
 
-public final class SecurityScopedFileCatalog: UserFileAccessBroker, @unchecked Sendable {
+public final class SecurityScopedFileCatalog: UserFileAccessBroker, UserFileWriteBroker, @unchecked Sendable {
     private struct Record: Codable {
         let id: UserFileResourceID
         var displayName: String
@@ -154,6 +154,53 @@ public final class SecurityScopedFileCatalog: UserFileAccessBroker, @unchecked S
                 content: content,
                 byteCount: data.count,
                 truncated: truncated
+            )
+        }
+    }
+
+    public func writeText(
+        resourceID: UserFileResourceID,
+        content: String,
+        requireEmpty: Bool
+    ) async throws -> UserFileTextWrite {
+        let data = Data(content.utf8)
+        guard data.count <= 16_777_216 else {
+            throw UserFileAccessError.invalidLimit
+        }
+
+        return try withSecurityScopedURL(resourceID: resourceID) { resolvedURL, descriptor in
+            if requireEmpty {
+                let attributes: [FileAttributeKey: Any]
+                do {
+                    attributes = try FileManager.default.attributesOfItem(atPath: resolvedURL.path)
+                } catch {
+                    throw UserFileAccessError.resourceUnavailable(resourceID)
+                }
+                let existingSize = (attributes[.size] as? NSNumber)?.intValue ?? 0
+                guard existingSize == 0 else {
+                    throw UserFileAccessError.outputNotEmpty(resourceID)
+                }
+            }
+
+            let handle: FileHandle
+            do {
+                handle = try FileHandle(forWritingTo: resolvedURL)
+            } catch {
+                throw UserFileAccessError.writeFailed(resourceID, String(describing: error))
+            }
+            defer { try? handle.close() }
+
+            do {
+                try handle.seek(toOffset: 0)
+                try handle.write(contentsOf: data)
+                try handle.synchronize()
+            } catch {
+                throw UserFileAccessError.writeFailed(resourceID, String(describing: error))
+            }
+
+            return UserFileTextWrite(
+                descriptor: descriptor,
+                byteCount: data.count
             )
         }
     }
