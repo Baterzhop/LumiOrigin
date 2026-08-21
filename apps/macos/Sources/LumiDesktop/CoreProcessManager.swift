@@ -33,15 +33,15 @@ final class CoreProcessManager: ObservableObject {
         state = .checking
         detail = "Checking Lumi Core…"
         let client = LumiClientConfiguration.configuredClient()
-        if await isHealthy(client) {
+        if await isReady(client) {
             state = process?.isRunning == true ? .runningManaged : .connected
             detail = process?.isRunning == true ? "Lumi Core is running with the app." : "Lumi Core is ready."
             return
         }
 
-        guard Self.isLoopback(client.baseURL) else {
+        guard Self.canAutoLaunch(client.baseURL) else {
             state = .remoteUnavailable(client.baseURL.absoluteString)
-            detail = "Configured remote Lumi Core is unavailable."
+            detail = "Configured Lumi Core is unavailable or authentication failed. Only loopback HTTP Core can be auto-started by Lumi."
             return
         }
 
@@ -101,12 +101,12 @@ final class CoreProcessManager: ObservableObject {
         candidates.append(URL(fileURLWithPath: "/usr/local/bin/lumi-core"))
 
         let bundle = Bundle.main.bundleURL
-        let repositoryCandidate = bundle
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent(".venv/bin/lumi-core")
-        candidates.append(repositoryCandidate)
-
+        candidates.append(
+            bundle
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent(".venv/bin/lumi-core")
+        )
         return candidates.first { fm.isExecutableFile(atPath: $0.path) }
     }
 
@@ -115,9 +115,15 @@ final class CoreProcessManager: ObservableObject {
         return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
     }
 
-    private func launch(executable: URL, baseURL: URL) throws {
-        let port = baseURL.port ?? (baseURL.scheme?.lowercased() == "https" ? 443 : 80)
+    static func canAutoLaunch(_ url: URL) -> Bool {
+        isLoopback(url) && url.scheme?.lowercased() == "http"
+    }
 
+    private func launch(executable: URL, baseURL: URL) throws {
+        guard Self.canAutoLaunch(baseURL) else {
+            throw NSError(domain: "Lumi", code: 2, userInfo: [NSLocalizedDescriptionKey: "Managed Core requires a loopback HTTP URL"])
+        }
+        let port = baseURL.port ?? 80
         let fm = FileManager.default
         let applicationSupport = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Lumi")
         let dataDirectory = applicationSupport.appendingPathComponent("data")
@@ -158,7 +164,7 @@ final class CoreProcessManager: ObservableObject {
                 detail = "Lumi Core stopped during startup. See ~/Library/Logs/Lumi/core.log."
                 return
             }
-            if await isHealthy(client) {
+            if await isReady(client) {
                 state = process?.isRunning == true ? .runningManaged : .connected
                 detail = process?.isRunning == true ? "Lumi Core started by the app." : "Lumi Core is ready."
                 return
@@ -169,10 +175,12 @@ final class CoreProcessManager: ObservableObject {
         detail = "Lumi Core did not become ready within 20 seconds. See ~/Library/Logs/Lumi/core.log."
     }
 
-    private func isHealthy(_ client: LumiAPIClient) async -> Bool {
+    private func isReady(_ client: LumiAPIClient) async -> Bool {
         do {
             let health = try await client.health()
-            return health.ok
+            guard health.ok else { return false }
+            let runtime = try await client.runtimeStatus()
+            return runtime.ok
         } catch {
             return false
         }
