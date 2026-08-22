@@ -205,11 +205,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Install Lumi first with: bash scripts/install_lumi.sh", file=sys.stderr)
         return 2
 
-    evidence_dir = Path.home() / "Library" / "Application Support" / "Lumi" / "ga-evidence"
+    application_support = Path.home() / "Library" / "Application Support" / "Lumi"
+    production_data_dir = application_support / "data"
+    evidence_dir = application_support / "ga-evidence"
     output = args.output.expanduser() if args.output else evidence_dir / "4.0.0-ga.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     api_key = _api_key()
     env = os.environ.copy()
+    env.setdefault("LUMI_DATA_DIR", str(production_data_dir))
+    env.setdefault("LUMI_BACKUP_DIR", str(production_data_dir / "backups"))
     if api_key:
         env["LUMI_API_KEY"] = api_key
 
@@ -300,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
             chat = client.post(
                 "/v1/chat",
                 json={
-                    "message": f"What is the exact GA verification code from the Lumi GA verification document? Return the code and cite the source.",
+                    "message": "What is the exact GA verification code from the Lumi GA verification document? Return the code and cite the source.",
                 },
             )
             chat.raise_for_status()
