@@ -14,6 +14,7 @@ def test_branch_protection_configurator_is_syntax_valid_and_fail_closed():
 
     assert "APPLY=0" in content
     assert "--apply" in content
+    assert "--evidence" in content
     assert '"allow_force_pushes": False' in content
     assert '"allow_deletions": False' in content
     assert '"required_conversation_resolution": True' in content
@@ -22,3 +23,8 @@ def test_branch_protection_configurator_is_syntax_valid_and_fail_closed():
     assert "macos-client" in content
     assert "macos-install-smoke" in content
     assert "Branch protection applied and verified." in content
+    assert '"main_protected": True' in content
+    assert '"pull_requests_required": True' in content
+    assert '"v4_ci_required": True' in content
+    assert '"force_push_blocked": True' in content
+    assert '"deletion_blocked": True' in content
