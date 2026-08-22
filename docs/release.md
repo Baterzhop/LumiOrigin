@@ -1,15 +1,15 @@
-# Lumi V4 RC5 Release Candidate
+# Lumi V4 Release and GA Promotion
 
-This document defines the local release process for the V4 RC5 line.
+This document defines the supported installation, verification and final `4.0.0` promotion flow.
 
 ## Supported target
 
 - macOS 13 or newer for the native client.
-- Python 3.11 or newer; CI and release artifacts use Python 3.12.
-- Ollama-compatible local chat endpoint is optional for fallback operation but required for real generated answers and Developer Agent planning.
-- The default deployment model is one local user on one machine.
+- Python 3.11 or newer; CI/release verification uses Python 3.12.
+- Ollama-compatible model endpoint. Fallback mode is supported, but real-model GA acceptance requires an actually available model.
+- Default deployment: one local user on one machine.
 
-## One-command local installation
+## Install
 
 From the repository root:
 
@@ -17,62 +17,50 @@ From the repository root:
 bash scripts/install_lumi.sh
 ```
 
-On macOS this creates a stable Core environment at:
+The installer creates:
 
 ```text
 ~/Library/Application Support/Lumi/runtime/venv
+~/Library/Application Support/Lumi/data
+~/Applications/Lumi.app
 ```
 
-initializes state under `~/Library/Application Support/Lumi/data`, runs the Core doctor, creates an ad-hoc signed `dist/Lumi.app`, and copies the application to `~/Applications/Lumi.app` by default.
+The native app owns the normal local Core lifecycle. Ordinary use does not require a Terminal window to remain open.
 
-Use `--no-user-app` to keep only `dist/Lumi.app`, or `--core-only` to skip the app build.
-
-## Normal macOS startup and first-run setup
-
-After installation:
+## Normal startup
 
 ```bash
 open "$HOME/Applications/Lumi.app"
 ```
 
-The native app owns the normal local Core lifecycle:
+On startup Lumi:
 
-1. read secure connection configuration;
-2. check whether Core is already healthy;
-3. if the configured URL is auto-manageable loopback HTTP and Core is offline, locate the installed `lumi-core` executable;
-4. load saved non-secret local model settings unless explicit environment overrides exist;
-5. start Core on the configured loopback port;
-6. wait for health;
-7. on first successful launch, show **Finish Lumi setup** so the user can discover/select the real Ollama chat model and embedding configuration;
-8. terminate only the Core child process started by this app when Lumi exits.
+1. loads validated Core/model configuration;
+2. checks Core readiness;
+3. auto-starts only a loopback HTTP Core it is allowed to manage;
+4. passes saved non-secret model settings to the managed Core unless explicit environment overrides exist;
+5. waits for readiness;
+6. shows first-run model setup when required;
+7. terminates only the Core child process it started when Lumi exits.
 
-The app-managed process writes stdout/stderr to `~/Library/Logs/Lumi/core.log` and uses `~/Library/Application Support/Lumi/data` unless `LUMI_DATA_DIR` is explicitly supplied.
+Core logs:
 
-`scripts/start_lumi.sh` is a convenience launcher on macOS. A terminal is not required to stay open for ordinary use.
+```text
+~/Library/Logs/Lumi/core.log
+```
 
-## Native connection and model settings
+## Model and connection security
 
-The Settings window stores the Core URL in UserDefaults and the optional API key in macOS Keychain. Environment variables continue to take precedence for development/automation.
+The native settings layer enforces:
 
-Security rules:
+- HTTP only for loopback hosts;
+- HTTPS for remote Core/model servers;
+- no embedded URL credentials;
+- no query/fragment components in base URLs;
+- API keys stored in macOS Keychain;
+- explicit process environment values override saved settings.
 
-- HTTP URLs are accepted only for loopback hosts;
-- remote Core/model-server configuration must use HTTPS;
-- usernames/passwords/API credentials embedded in URLs are rejected;
-- query strings and fragments are rejected from base URLs;
-- saved API keys must contain at least 24 characters;
-- deleting the saved key removes the generic-password Keychain item.
-
-The app-managed Ollama configuration includes:
-
-- Ollama server URL;
-- chat model name;
-- embedding model name;
-- dense-retrieval enable/disable toggle.
-
-**Discover installed models** calls Ollama `GET /api/tags` using typed HTTP transport. It does not execute a shell command. **Save models & restart managed Core** persists the non-secret configuration and restarts only a Core child process owned by Lumi. External/remote Core processes are never terminated by this action.
-
-Saved values map to:
+Managed model settings map to:
 
 ```text
 LUMI_OLLAMA_URL=<server>/api/chat
@@ -82,45 +70,21 @@ LUMI_EMBEDDING_MODEL=<embedding model>
 LUMI_RAG_DENSE=true|false
 ```
 
-Explicit process environment values remain higher-priority overrides.
-
-## Native diagnostics and Readiness Center
-
-Use **Core → Open Diagnostics…** (`⇧⌘I`) for metadata-only troubleshooting. It excludes API-key values, prompts/chat text, durable-memory contents, knowledge-document contents and repository contents.
-
-Use **Core → Open Readiness Center…** (`⇧⌘R`) for target-machine acceptance. The Readiness Center runs the packaged installed-runtime acceptance command. In real-model mode the check fails if either ordinary chat or streaming falls back.
-
-## Core operations CLI
-
-The standard macOS runtime exposes:
+## Core operations
 
 ```bash
 CORE="$HOME/Library/Application Support/Lumi/runtime/venv/bin/lumi-core"
 "$CORE" version
 "$CORE" doctor
 "$CORE" migrate
-"$CORE" backup
-"$CORE" restore <backup.sqlite3> --yes
+"$CORE" backup --full
+"$CORE" restore <backup.sqlite3> --yes --full
 "$CORE" acceptance
 "$CORE" acceptance --require-model
 "$CORE" serve
 ```
 
-`doctor` checks validated configuration, SQLite integrity and local-model availability. Model availability is informational unless `--require-model` is supplied.
-
-`acceptance` is a packaged, installed-runtime contract. It validates:
-
-- liveness and readiness;
-- runtime metadata;
-- ordinary chat;
-- SSE streaming;
-- `fallback:false` when `--require-model` is requested;
-- durable-memory create/search/delete round trip;
-- grounded knowledge upload/query;
-- non-empty tool registry;
-- verified database backup creation.
-
-The probe is repeatable: it reuses a dedicated acceptance conversation and deterministic knowledge document instead of creating unbounded rows, and deletes its temporary durable-memory record after each run.
+`acceptance` verifies liveness/readiness, chat + SSE, durable-memory round trip, grounded knowledge, tool registry and backup creation. `--require-model` additionally fails if normal chat or streaming falls back.
 
 ## Backup and recovery
 
@@ -130,44 +94,107 @@ Create a verified backup:
 "$CORE" backup --full
 ```
 
-Restore is deliberately explicit and requires Core to be stopped:
+Restore requires explicit confirmation and Core downtime:
 
 ```bash
 "$CORE" restore ~/.lumi-backup.sqlite3 --yes --full
 ```
 
-Before replacing an existing database, restore creates a `pre-restore-*` safety backup. The source backup is verified before use, the restored temporary database is verified before replacement, and the final database is verified again after replacement.
+Restore verifies the source, creates a safety backup of an existing database, restores through a temporary database, verifies it and only then replaces the target.
 
-## Physical target-Mac acceptance
+## Repository CI contract
 
-After installation and selecting an actually installed Ollama chat model, run either the native Readiness Center in **Require real model** mode or:
-
-```bash
-"$HOME/Library/Application Support/Lumi/runtime/venv/bin/lumi-core" acceptance --require-model
-```
-
-The result must return `"ok": true` and `"fallback": false`. This command is part of the installed wheel/runtime, so it does not depend on keeping a repository checkout or invoking a repository-only Python file.
-
-The external GA checklist is tracked in GitHub issue #44. Repository CI cannot substitute for the actual target-machine Ollama/macOS session.
-
-## macOS package
-
-Build the local/ad-hoc package:
-
-```bash
-bash scripts/build_macos_app.sh
-```
-
-Outputs:
+A release candidate must pass all five V4 jobs:
 
 ```text
-dist/Lumi.app
-dist/Lumi-macOS-4.0.0rc5.zip
+core (ubuntu-latest, 3.12)
+core (macos-14, 3.12)
+macos-client
+macos-install-smoke
+macos-ga-orchestration-smoke
 ```
 
-## Developer-ID signing and notarization
+Together these cover:
 
-The repository is credential-ready for public distribution:
+- dependency integrity and Core doctor;
+- Python unit/API/security/RAG/memory/tool/Developer-Agent tests;
+- deterministic multilingual RAG/memory eval gates;
+- fallback HTTP/SSE acceptance;
+- primary-model + dense-embedding acceptance;
+- wheel/sdist build and clean install verification;
+- Swift build/tests and connection/model validation;
+- macOS packaging, plist and codesign verification;
+- production-style installation;
+- installed Core acceptance;
+- full hosted macOS GA orchestration.
+
+The hosted GA orchestration launches the installed `Lumi.app`, exercises its managed Core, validates a primary-model grounded citation, restart-persistent memory, read tool, exact approval-gated write and backup/restore-copy. It proves the release orchestration itself but does not replace the real physical target-Mac gate.
+
+## Physical target-Mac GA acceptance
+
+Use the exact commit you intend to promote. Install that candidate, select the real local chat and embedding models, then run:
+
+```bash
+"$HOME/Library/Application Support/Lumi/runtime/venv/bin/python" scripts/ga_acceptance_macos.py
+```
+
+Evidence is written to:
+
+```text
+~/Library/Application Support/Lumi/ga-evidence/4.0.0-ga.json
+```
+
+The probe requires:
+
+- app-managed Core startup;
+- installed `lumi-core acceptance --require-model` with `fallback=false`;
+- a real-model grounded answer with matching citation metadata;
+- durable memory across full app/Core restart;
+- read-only tool execution;
+- exact persisted write proposal blocked until approval and executed only after approval;
+- verified backup and full restore into a disposable copy;
+- app-owned Core shutdown ownership.
+
+If runtime code changes after this `candidate_commit`, the target evidence is invalid and must be regenerated.
+
+## Repository governance
+
+`main` must be protected before GA. With an administrator-authenticated GitHub CLI session:
+
+```bash
+TARGET="$HOME/Library/Application Support/Lumi/ga-evidence/4.0.0-ga.json"
+bash scripts/configure_branch_protection.sh \
+  --repository Baterzhop/LumiOrigin \
+  --branch main \
+  --evidence "$TARGET" \
+  --apply
+```
+
+The configurator is dry-run by default. With `--apply` it writes GitHub protection, reads the policy back and updates GA governance evidence only after verification succeeds.
+
+The required policy includes pull-request flow, strict status checks for all five V4 jobs, blocked force pushes/deletion and conversation resolution.
+
+## Promote the accepted candidate to 4.0.0
+
+After physical acceptance, only release metadata may differ from the accepted candidate. Set both canonical Core version locations to `4.0.0` through a normal PR and run the five-gate CI again.
+
+The final release verifier allow-list is intentionally narrow:
+
+```text
+services/core/pyproject.toml
+services/core/src/lumi_core/__init__.py
+CHANGELOG.md
+README.md
+RELEASE_CHECKLIST.md
+docs/release.md
+release-evidence/4.0.0-ga.json
+```
+
+Any other changed file after `candidate_commit` blocks the final tag and requires new physical acceptance.
+
+## Public distribution: Developer ID + Apple notarization
+
+Public downloadable distribution is an additional external gate. After the promotion branch is versioned `4.0.0`:
 
 ```bash
 xcrun notarytool store-credentials "lumi-notary" ...
@@ -176,53 +203,77 @@ export LUMI_NOTARY_PROFILE="lumi-notary"
 bash scripts/notarize_macos_app.sh
 ```
 
-The notarization script:
+The script:
 
 1. refuses ad-hoc/no signing identities;
 2. builds with the selected Developer ID Application identity;
 3. verifies codesign;
-4. submits the ZIP with `xcrun notarytool ... --wait` using a Keychain profile;
-5. staples and validates the ticket on `Lumi.app`;
-6. runs Gatekeeper `spctl --assess`;
-7. recreates the distribution ZIP after stapling;
-8. creates and verifies the final SHA-256 file.
+4. submits the ZIP using the Keychain notary profile;
+5. waits for Apple acceptance;
+6. staples and validates the ticket;
+7. runs Gatekeeper assessment;
+8. recreates the ZIP after stapling;
+9. verifies its SHA-256;
+10. emits non-secret notarization evidence.
 
-Real Apple credentials are external secrets, so repository CI validates the entrypoint but does not claim notarization has passed until it has actually run with valid credentials.
+Evidence:
 
-## GitHub release artifacts and checksums
-
-`.github/workflows/v4-release.yml` builds:
-
-- Python wheel + source distribution + `SHA256SUMS`;
-- macOS app ZIP + matching `.sha256` file.
-
-Example verification:
-
-```bash
-shasum -a 256 -c Lumi-macOS-4.0.0rc5.zip.sha256
-sha256sum -c SHA256SUMS
+```text
+dist/Lumi-macOS-4.0.0.notarization.json
 ```
 
-## Release gate
+## Compose final evidence
 
-A release-candidate commit is repository-ready only if all automatable gates are green on that exact head:
+No manual JSON editing is required.
 
-1. Python install and `pip check`.
-2. `lumi-core doctor` initialization.
-3. Full Python unit/API/security/RAG/memory/tool/Developer-Agent/acceptance tests on Ubuntu and macOS.
-4. Deterministic multilingual RAG regression gate.
-5. Deterministic multilingual memory regression gate.
-6. Live fallback HTTP/SSE acceptance through the packaged `lumi-core acceptance` command.
-7. Live primary-model + dense-embedding acceptance with `--require-model` against the deterministic Ollama-compatible CI server.
-8. Python wheel/sdist build and clean-environment wheel smoke, including presence of the packaged acceptance command.
-9. Swift debug build/tests, including secure Core/model-server configuration, model discovery and acceptance-command configuration.
-10. macOS release bundle build, plist validation, code-sign and SHA-256 verification.
-11. production-style macOS installation into the stable Application Support runtime.
-12. live fallback acceptance invoked by the **installed** `lumi-core` executable.
-13. release-artifact checksum generation and verification.
-14. shell validation of the credential-ready notarization path.
+Local/non-public GA:
 
-External gates that cannot be truthfully completed by GitHub-hosted CI:
+```bash
+python3 scripts/compose_ga_evidence.py "$TARGET" \
+  --output release-evidence/4.0.0-ga.json
+```
 
-15. physical target-Mac acceptance with `lumi-core acceptance --require-model` against the actual selected Ollama model;
-16. public distribution: real Developer-ID signing, Apple notarization/stapling and Gatekeeper verification on a clean target.
+Public GA:
+
+```bash
+python3 scripts/compose_ga_evidence.py "$TARGET" \
+  --notarization dist/Lumi-macOS-4.0.0.notarization.json \
+  --public \
+  --output release-evidence/4.0.0-ga.json
+```
+
+Validate the evidence and promotion:
+
+```bash
+python3 scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json
+python3 scripts/verify_ga_promotion.py release-evidence/4.0.0-ga.json --release-ref HEAD
+```
+
+For public distribution:
+
+```bash
+python3 scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json --public
+```
+
+## Final tag
+
+Only after the physical, governance and applicable Apple gates are real may the final tag be created:
+
+```text
+v4.0.0
+```
+
+`.github/workflows/v4-release.yml` independently verifies:
+
+- tag/version consistency;
+- final GA evidence;
+- existence and ancestry of `candidate_commit`;
+- target app/Core version matching the accepted candidate;
+- final project/runtime version exactly `4.0.0`;
+- no runtime or unapproved file changes after physical acceptance.
+
+The workflow fetches full Git history specifically so the promotion proof cannot be bypassed by a shallow checkout.
+
+## GA rule
+
+Green hosted CI is necessary but not sufficient. Lumi V4 is `4.0.0` GA only when physical target-Mac evidence and repository governance are real. Public distribution additionally requires real Developer-ID/notarization/Gatekeeper evidence.
