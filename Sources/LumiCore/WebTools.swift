@@ -153,8 +153,8 @@ private final class BoundedWebSessionDelegate: NSObject, URLSessionDataDelegate,
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
-        willPerformHTTPRedirection newRequest: URLRequest,
-        newResponse: HTTPURLResponse,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
         // Redirects are deliberately disabled. The caller may explicitly fetch the new URL so the
