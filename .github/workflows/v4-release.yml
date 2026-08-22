@@ -14,10 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Validate GA helper scripts
         run: |
-          python -m py_compile scripts/validate_ga_evidence.py scripts/ga_acceptance_macos.py
-          bash -n scripts/notarize_macos_app.sh
+          python -m py_compile scripts/validate_ga_evidence.py scripts/assemble_ga_evidence.py scripts/ga_acceptance_macos.py
+          bash -n scripts/notarize_macos_app.sh scripts/configure_branch_protection.sh
       - name: Require tag to match Lumi Core package version
         if: github.ref_type == 'tag'
         run: |
@@ -39,6 +41,32 @@ jobs:
       - name: Fail closed for final 4.0.0 without verified external evidence
         if: github.ref == 'refs/tags/v4.0.0'
         run: python scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json
+      - name: Bind final tag to the exact physically accepted candidate tree
+        if: github.ref == 'refs/tags/v4.0.0'
+        run: |
+          CANDIDATE="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('release-evidence/4.0.0-ga.json').read_text(encoding='utf-8'))
+          print(payload['candidate_commit'])
+          PY
+          )"
+          git cat-file -e "$CANDIDATE^{commit}"
+          git merge-base --is-ancestor "$CANDIDATE" HEAD || {
+            echo "Physically accepted candidate is not an ancestor of the final tag" >&2
+            exit 1
+          }
+          CANDIDATE_VERSION="$(git show "$CANDIDATE:services/core/src/lumi_core/__init__.py" | python -c 'import re,sys; text=sys.stdin.read(); m=re.search(r"__version__\\s*=\\s*[\"\\x27]([^\"\\x27]+)", text); print(m.group(1) if m else "")')"
+          test "$CANDIDATE_VERSION" = "4.0.0" || {
+            echo "Physical acceptance candidate must itself identify as 4.0.0; got $CANDIDATE_VERSION" >&2
+            exit 1
+          }
+          mapfile -t CHANGED < <(git diff --name-only "$CANDIDATE"..HEAD)
+          if [[ "${#CHANGED[@]}" -ne 1 || "${CHANGED[0]}" != "release-evidence/4.0.0-ga.json" ]]; then
+            echo "Final tag differs from the physical acceptance candidate outside the evidence file:" >&2
+            printf '  %s\n' "${CHANGED[@]}" >&2
+            exit 1
+          fi
       - name: Upload final GA evidence
         if: github.ref == 'refs/tags/v4.0.0'
         uses: actions/upload-artifact@v4
