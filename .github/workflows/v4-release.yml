@@ -10,7 +10,27 @@ permissions:
   contents: read
 
 jobs:
+  ga-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate GA helper scripts
+        run: |
+          python -m py_compile scripts/validate_ga_evidence.py scripts/ga_acceptance_macos.py
+          bash -n scripts/notarize_macos_app.sh
+      - name: Fail closed for final 4.0.0 without verified external evidence
+        if: github.ref == 'refs/tags/v4.0.0'
+        run: python scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json
+      - name: Upload final GA evidence
+        if: github.ref == 'refs/tags/v4.0.0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumi-ga-evidence
+          path: release-evidence/4.0.0-ga.json
+          if-no-files-found: error
+
   core-wheel:
+    needs: ga-evidence
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +62,7 @@ jobs:
           if-no-files-found: error
 
   macos-app:
+    needs: ga-evidence
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
