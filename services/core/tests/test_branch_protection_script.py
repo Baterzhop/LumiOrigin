@@ -32,6 +32,7 @@ if args and args[0] == \"api\":
                 \"core (macos-14, 3.12)\",
                 \"macos-client\",
                 \"macos-install-smoke\",
+                \"macos-ga-orchestration-smoke\",
             ],
         },
         \"required_pull_request_reviews\": {\"required_approving_review_count\": 0},
@@ -65,6 +66,7 @@ def test_branch_protection_configurator_is_syntax_valid_and_fail_closed():
     assert "core (macos-14, 3.12)" in content
     assert "macos-client" in content
     assert "macos-install-smoke" in content
+    assert "macos-ga-orchestration-smoke" in content
     assert "Branch protection applied and verified." in content
     assert '"main_protected": True' in content
     assert '"pull_requests_required": True' in content

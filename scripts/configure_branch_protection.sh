@@ -76,7 +76,8 @@ CHECKS_JSON='[
   "core (ubuntu-latest, 3.12)",
   "core (macos-14, 3.12)",
   "macos-client",
-  "macos-install-smoke"
+  "macos-install-smoke",
+  "macos-ga-orchestration-smoke"
 ]'
 
 PAYLOAD="$(python3 - "$CHECKS_JSON" <<'PY'
@@ -149,6 +150,7 @@ expected = {
     "core (macos-14, 3.12)",
     "macos-client",
     "macos-install-smoke",
+    "macos-ga-orchestration-smoke",
 }
 errors = []
 if not expected.issubset(contexts):
