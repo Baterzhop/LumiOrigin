@@ -14,9 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Validate GA helper scripts
         run: |
-          python -m py_compile scripts/lumi_version.py scripts/validate_ga_evidence.py scripts/ga_acceptance_macos.py
+          python -m py_compile scripts/lumi_version.py scripts/validate_ga_evidence.py scripts/ga_acceptance_macos.py scripts/compose_ga_evidence.py scripts/verify_ga_promotion.py
           bash -n scripts/notarize_macos_app.sh scripts/build_macos_app.sh
       - name: Require tag to match canonical project version
         if: github.ref_type == 'tag'
@@ -24,6 +26,9 @@ jobs:
       - name: Fail closed for final 4.0.0 without verified external evidence
         if: github.ref == 'refs/tags/v4.0.0'
         run: python scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json
+      - name: Prove final 4.0.0 is the tested candidate plus release metadata only
+        if: github.ref == 'refs/tags/v4.0.0'
+        run: python scripts/verify_ga_promotion.py release-evidence/4.0.0-ga.json --release-ref "$GITHUB_SHA"
       - name: Upload final GA evidence
         if: github.ref == 'refs/tags/v4.0.0'
         uses: actions/upload-artifact@v4
