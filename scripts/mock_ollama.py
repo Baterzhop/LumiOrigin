@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 from typing import Any
 
 from fastapi import FastAPI
@@ -14,6 +15,7 @@ import uvicorn
 
 CHAT_MODEL = "lumi-ci-model"
 EMBED_MODEL = "lumi-ci-embed"
+GA_CODE_RE = re.compile(r"LUMI-GA-[A-F0-9]{12}")
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 
@@ -48,17 +50,36 @@ def embed(payload: dict[str, Any]) -> dict[str, Any]:
     return {"model": payload.get("model") or EMBED_MODEL, "embeddings": [_embedding(str(value)) for value in values]}
 
 
-@app.post("/api/chat")
-def chat(payload: dict[str, Any]):
-    messages = payload.get("messages") or []
+def _chat_content(messages: list[Any]) -> str:
     last_user = ""
     for message in reversed(messages):
         if isinstance(message, dict) and message.get("role") == "user":
             last_user = str(message.get("content") or "")
             break
+
+    # The physical-GA orchestration CI uses the same grounded path as the real
+    # model acceptance. The verification code must be copied from retrieved
+    # context supplied in the system message, never invented from the user text.
+    if "exact GA verification code" in last_user:
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            match = GA_CODE_RE.search(str(message.get("content") or ""))
+            if match:
+                return f"{match.group(0)} [S1]"
+
     content = "Lumi CI model response"
     if last_user:
         content += f": {last_user[:120]}"
+    return content
+
+
+@app.post("/api/chat")
+def chat(payload: dict[str, Any]):
+    messages = payload.get("messages") or []
+    if not isinstance(messages, list):
+        messages = []
+    content = _chat_content(messages)
 
     if not payload.get("stream"):
         return {"model": payload.get("model") or CHAT_MODEL, "message": {"role": "assistant", "content": content}, "done": True}
