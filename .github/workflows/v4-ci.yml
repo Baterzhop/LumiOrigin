@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Validate shell entrypoints
-        run: bash -n scripts/install_lumi.sh scripts/start_lumi.sh scripts/build_macos_app.sh scripts/notarize_macos_app.sh
+        run: bash -n scripts/install_lumi.sh scripts/start_lumi.sh scripts/build_macos_app.sh scripts/notarize_macos_app.sh scripts/ga_target_mac.sh scripts/configure_branch_protection.sh
       - name: Install tested dependency set
         run: |
           python -m pip install -c services/core/requirements.lock -e "services/core[dev]"
@@ -112,6 +112,11 @@ jobs:
           PY
           lumi-core doctor --require-model --require-database
           lumi-core acceptance --base-url http://127.0.0.1:8792 --require-model
+          python scripts/ga_machine_check.py \
+            --base-url http://127.0.0.1:8792 \
+            --require-model \
+            --approve-tool-write \
+            --output "${RUNNER_TEMP}/lumi-ga-machine-evidence.json"
       - name: Build Python distribution
         if: matrix.os == 'ubuntu-latest'
         run: python -m build services/core
@@ -210,3 +215,7 @@ jobs:
           raise SystemExit("Installed Core did not become ready")
           PY
           "$VENV/bin/lumi-core" acceptance --base-url http://127.0.0.1:8793
+          "$VENV/bin/python" scripts/ga_machine_check.py \
+            --base-url http://127.0.0.1:8793 \
+            --approve-tool-write \
+            --output "${RUNNER_TEMP}/lumi-installed-ga-evidence.json"
