@@ -101,12 +101,23 @@ public struct LumiRuntimeContainer: Sendable {
             withIntermediateDirectories: true
         )
         let sandbox = WorkspaceSandbox(rootURL: workspaceURL)
-        let registry = ToolRegistry(tools: [
+        var tools: [any LumiTool] = [
             ListWorkspaceFilesTool(sandbox: sandbox),
             ReadWorkspaceTextFileTool(sandbox: sandbox),
+            WorkspaceFileInfoTool(sandbox: sandbox),
+            SearchWorkspaceTextTool(sandbox: sandbox),
             KnowledgeSearchTool(knowledge: hybrid),
-            MemorySearchTool(memory: memoryRuntime)
-        ])
+            MemorySearchTool(memory: memoryRuntime),
+            FetchWebTextTool()
+        ]
+
+        #if canImport(EventKit)
+        let personalData = EventKitPersonalDataProvider()
+        tools.append(CalendarListEventsTool(provider: personalData))
+        tools.append(ReminderListTool(provider: personalData))
+        #endif
+
+        let registry = ToolRegistry(tools: tools)
         let toolRuntime = ToolRuntime(
             registry: registry,
             policy: ToolPermissionPolicy(
