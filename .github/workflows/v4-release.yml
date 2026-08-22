@@ -10,7 +10,45 @@ permissions:
   contents: read
 
 jobs:
+  ga-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate GA helper scripts
+        run: |
+          python -m py_compile scripts/validate_ga_evidence.py scripts/ga_acceptance_macos.py
+          bash -n scripts/notarize_macos_app.sh
+      - name: Require tag to match Lumi Core package version
+        if: github.ref_type == 'tag'
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CORE_VERSION="$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('services/core/src/lumi_core/__init__.py').read_text(encoding='utf-8')
+          match = re.search(r'__version__\s*=\s*["\x27]([^"\x27]+)', text)
+          if not match:
+              raise SystemExit('Core version not found')
+          print(match.group(1))
+          PY
+          )"
+          test "$TAG_VERSION" = "$CORE_VERSION" || {
+            echo "Tag version $TAG_VERSION does not match Core version $CORE_VERSION" >&2
+            exit 1
+          }
+      - name: Fail closed for final 4.0.0 without verified external evidence
+        if: github.ref == 'refs/tags/v4.0.0'
+        run: python scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json
+      - name: Upload final GA evidence
+        if: github.ref == 'refs/tags/v4.0.0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumi-ga-evidence
+          path: release-evidence/4.0.0-ga.json
+          if-no-files-found: error
+
   core-wheel:
+    needs: ga-evidence
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,22 +80,46 @@ jobs:
           if-no-files-found: error
 
   macos-app:
+    needs: ga-evidence
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Validate notarization entrypoint
         run: bash -n scripts/notarize_macos_app.sh
+      - name: Resolve release version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('services/core/src/lumi_core/__init__.py').read_text(encoding='utf-8')
+          match = re.search(r'__version__\s*=\s*["\x27]([^"\x27]+)', text)
+          if not match:
+              raise SystemExit('Core version not found')
+          print(match.group(1))
+          PY
+          )"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Build and ad-hoc sign app bundle
+        env:
+          LUMI_VERSION: ${{ steps.version.outputs.version }}
         run: bash scripts/build_macos_app.sh
       - name: Verify package
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           plutil -lint dist/Lumi.app/Contents/Info.plist
           codesign --verify --deep --strict dist/Lumi.app
-          test -f dist/Lumi-macOS-4.0.0rc5.zip
+          test -f "dist/Lumi-macOS-$VERSION.zip"
+          BUNDLE_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - dist/Lumi.app/Contents/Info.plist)"
+          test "$BUNDLE_VERSION" = "$VERSION"
       - name: Generate macOS checksum
         run: |
           cd dist
-          ZIP="Lumi-macOS-4.0.0rc5.zip"
+          ZIP="Lumi-macOS-${{ steps.version.outputs.version }}.zip"
           shasum -a 256 "$ZIP" > "$ZIP.sha256"
           shasum -a 256 -c "$ZIP.sha256"
           cat "$ZIP.sha256"
@@ -66,6 +128,6 @@ jobs:
         with:
           name: lumi-macos
           path: |
-            dist/Lumi-macOS-4.0.0rc5.zip
-            dist/Lumi-macOS-4.0.0rc5.zip.sha256
+            dist/Lumi-macOS-${{ steps.version.outputs.version }}.zip
+            dist/Lumi-macOS-${{ steps.version.outputs.version }}.zip.sha256
           if-no-files-found: error
