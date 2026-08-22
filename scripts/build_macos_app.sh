@@ -4,9 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT/apps/macos"
 OUT_DIR="${LUMI_RELEASE_DIR:-$ROOT/dist}"
-VERSION="${LUMI_VERSION:-4.0.0rc5}"
 BUNDLE_ID="${LUMI_BUNDLE_ID:-app.lumi.desktop}"
 SIGN_IDENTITY="${LUMI_CODESIGN_IDENTITY:--}"
+
+command -v python3 >/dev/null 2>&1 || {
+  echo "python3 is required to resolve the canonical Lumi release version." >&2
+  exit 2
+}
+VERSION="$(python3 "$ROOT/scripts/lumi_version.py")"
 
 mkdir -p "$OUT_DIR"
 cd "$APP_DIR"

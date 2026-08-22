@@ -25,12 +25,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Validate shell entrypoints
-        run: bash -n scripts/install_lumi.sh scripts/start_lumi.sh scripts/build_macos_app.sh scripts/notarize_macos_app.sh
+      - name: Validate release and shell entrypoints
+        run: |
+          python -m py_compile scripts/lumi_version.py scripts/validate_ga_evidence.py scripts/ga_acceptance_macos.py
+          bash -n scripts/install_lumi.sh scripts/start_lumi.sh scripts/build_macos_app.sh scripts/notarize_macos_app.sh
       - name: Install tested dependency set
         run: |
           python -m pip install -c services/core/requirements.lock -e "services/core[dev]"
           python -m pip check
+          python scripts/lumi_version.py --verify-runtime
           lumi-core version
       - name: CLI doctor
         env:
@@ -127,6 +130,7 @@ jobs:
           python -m venv "${RUNNER_TEMP}/lumi-wheel-smoke"
           "${RUNNER_TEMP}/lumi-wheel-smoke/bin/python" -m pip install -c services/core/requirements.lock services/core/dist/lumi_core-*.whl
           "${RUNNER_TEMP}/lumi-wheel-smoke/bin/python" -m pip check
+          "${RUNNER_TEMP}/lumi-wheel-smoke/bin/python" scripts/lumi_version.py --verify-runtime
           "${RUNNER_TEMP}/lumi-wheel-smoke/bin/lumi-core" version
           LUMI_DATA_DIR="${RUNNER_TEMP}/lumi-wheel-data" LUMI_RAG_DENSE=false "${RUNNER_TEMP}/lumi-wheel-smoke/bin/lumi-core" doctor --initialize --no-model --require-database
           "${RUNNER_TEMP}/lumi-wheel-smoke/bin/lumi-core" acceptance --help >/dev/null
@@ -156,14 +160,18 @@ jobs:
         run: swift test
       - name: Package local macOS app and verify checksum
         run: |
+          VERSION="$(python3 scripts/lumi_version.py)"
+          ZIP="Lumi-macOS-$VERSION.zip"
           bash scripts/build_macos_app.sh
           test -d dist/Lumi.app
           plutil -lint dist/Lumi.app/Contents/Info.plist
           codesign --verify --deep --strict dist/Lumi.app
-          test -f dist/Lumi-macOS-4.0.0rc5.zip
+          test -f "dist/$ZIP"
+          BUNDLE_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - dist/Lumi.app/Contents/Info.plist)"
+          test "$BUNDLE_VERSION" = "$VERSION"
           cd dist
-          shasum -a 256 Lumi-macOS-4.0.0rc5.zip > Lumi-macOS-4.0.0rc5.zip.sha256
-          shasum -a 256 -c Lumi-macOS-4.0.0rc5.zip.sha256
+          shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          shasum -a 256 -c "$ZIP.sha256"
 
   macos-install-smoke:
     runs-on: macos-14
@@ -177,7 +185,9 @@ jobs:
       - name: Verify stable runtime layout
         run: |
           CORE="$HOME/Library/Application Support/Lumi/runtime/venv/bin/lumi-core"
+          VENV="$HOME/Library/Application Support/Lumi/runtime/venv"
           test -x "$CORE"
+          "$VENV/bin/python" scripts/lumi_version.py --verify-runtime
           LUMI_DATA_DIR="$HOME/Library/Application Support/Lumi/data" LUMI_RAG_DENSE=false "$CORE" doctor --no-model --require-database
           "$CORE" acceptance --help >/dev/null
           test -d dist/Lumi.app
