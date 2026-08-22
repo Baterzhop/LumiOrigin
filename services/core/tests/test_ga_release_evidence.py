@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -64,6 +66,14 @@ def _run_validator(tmp_path: Path, payload: dict, *extra: str) -> subprocess.Com
     )
 
 
+def _load_mac_acceptance_module():
+    spec = importlib.util.spec_from_file_location("lumi_ga_acceptance_macos", MAC_ACCEPTANCE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_local_ga_evidence_accepts_verified_target_and_governance(tmp_path):
     result = _run_validator(tmp_path, _valid_payload())
     assert result.returncode == 0, result.stdout + result.stderr
@@ -112,3 +122,10 @@ def test_ga_helper_scripts_compile():
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_ga_tool_boundary_helper_executes_real_task_runtime(tmp_path):
+    module = _load_mac_acceptance_module()
+    read_ok, write_ok = asyncio.run(module._verify_tool_boundary(tmp_path))
+    assert read_ok is True
+    assert write_ok is True
