@@ -20,7 +20,7 @@ Verified on RC5 candidate head `dc97f298a4675b3fffb7f5511633857065d14d47` before
 - [x] Native Core URL security tests: loopback HTTP accepted, remote HTTP rejected, remote HTTPS accepted, embedded credentials/query/fragment rejected.
 - [x] Native Ollama server URL uses the same safe boundary.
 - [x] Model-name validation rejects empty/whitespace/control-character names.
-- [x] Saved model settings map to `LUMI_OLLAMA_URL`, `LUMI_OLLAMA_EMED_URL`, `LUMI_OLLAMA_MODEL`, `LUMI_EMBEDDING_MODEL` and `LUMI_RAG_DENSE` for the managed Core.
+- [x] Saved model settings map to `LUMI_OLLAMA_URL`, `LUMI_OLLAMA_EMBED_URL`, `LUMI_OLLAMA_MODEL`, `LUMI_EMBEDDING_MODEL` and `LUMI_RAG_DENSE` for the managed Core.
 - [x] Explicit process environment values are never overwritten by saved model settings.
 - [x] Ollama model discovery decodes/sorts/deduplicates `GET /api/tags` using injectable typed HTTP transport.
 - [x] First-run setup surface builds and can intentionally select a real model or continue in fallback mode.
