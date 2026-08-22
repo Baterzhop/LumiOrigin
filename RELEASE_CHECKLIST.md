@@ -40,24 +40,30 @@ Verified on RC5 candidate head `dc97f298a4675b3fffb7f5511633857065d14d47` before
 
 This cannot be truthfully completed by GitHub-hosted runners because it depends on the physical Mac and the actual installed local model. The authoritative external checklist is GitHub issue #44.
 
-```bash
-git clone https://github.com/Baterzhop/LumiOrigin.git
-cd LumiOrigin
-bash scripts/install_lumi.sh
-open "$HOME/Applications/Lumi.app"
-```
-
-On first launch, use **Finish Lumi setup** (or later **Lumi → Settings**) to discover installed Ollama models, select the actual chat model and apply it to the managed Core.
-
-Then use **Core → Open Readiness Center…** with **Require the configured real model** enabled, or run the equivalent installed command:
+After installing RC5 and selecting the real Ollama model in **Finish Lumi setup** / **Lumi → Settings**, run the one-command physical acceptance from the repository with the installed Core Python:
 
 ```bash
-"$HOME/Library/Application Support/Lumi/runtime/venv/bin/lumi-core" acceptance --require-model
+"$HOME/Library/Application Support/Lumi/runtime/venv/bin/python" scripts/ga_acceptance_macos.py
 ```
 
-The acceptance result must complete with `"ok": true` and `"fallback": false` for the selected local model.
+The probe is fail-closed and automatically verifies:
 
-The app itself must additionally be opened/restarted and confirm that the managed Core lifecycle behaves correctly. A real user document/citation, durable-memory persistence across restart, one read-only tool, one approval-gated write, backup/restore on a copy of data, and shutdown ownership should be checked before GA.
+- managed Core startup from `Lumi.app`;
+- real-model HTTP + SSE acceptance with `fallback=false`;
+- a grounded answer against a real temporary Markdown document with matching citation metadata;
+- durable memory surviving a full app/Core quit and restart;
+- read-only workspace tool execution;
+- an exact persisted write proposal staying blocked until explicit TaskRuntime approval;
+- backup creation and full restore/integrity verification against a disposable database copy;
+- app-owned Core shutdown ownership.
+
+It writes non-secret machine-readable target evidence to:
+
+```text
+~/Library/Application Support/Lumi/ga-evidence/4.0.0-ga.json
+```
+
+The target section is complete only when `target_mac.ok` is `true`. The script intentionally does **not** fake repository-governance or Apple-notarization evidence.
 
 ## Distribution gate
 
@@ -70,12 +76,36 @@ export LUMI_NOTARY_PROFILE="lumi-notary"
 bash scripts/notarize_macos_app.sh
 ```
 
-The script must complete Developer-ID verification, notarization, stapling, stapler validation, Gatekeeper assessment, post-staple packaging and SHA-256 verification. Lumi does not claim this gate until it has actually passed with valid credentials.
+After successful Developer-ID verification, Apple notarization, stapling and Gatekeeper assessment, the script now also emits:
+
+```text
+dist/Lumi-macOS-<version>.notarization.json
+```
+
+This fragment contains only non-secret verification state and the final artifact SHA-256.
 
 ## Repository governance gate
 
-`main` should be protected by a GitHub ruleset requiring pull requests and V4 CI before merge, with force-push/deletion protection. This is tracked in issue #53 because the available repository integration cannot mutate branch-protection/ruleset settings.
+`main` must be protected by a GitHub ruleset requiring pull requests and V4 CI before merge, with force-push/deletion protection. This is tracked in issue #53 because the available repository integration cannot mutate branch-protection/ruleset settings.
+
+## Final evidence gate
+
+`release-evidence/4.0.0-template.json` defines the final evidence contract. Before creating the final `v4.0.0` tag, populate `release-evidence/4.0.0-ga.json` from verified target-Mac/governance evidence and, for public distribution, the notarization evidence fragment.
+
+Validate it locally:
+
+```bash
+python3 scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json
+```
+
+For public distribution:
+
+```bash
+python3 scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json --public
+```
+
+The release workflow now fails closed for the final `v4.0.0` tag if this evidence is missing or incomplete. RC builds remain possible without falsely promoting the project to GA.
 
 ## GA invariant
 
-Do not change the release line to `4.0.0` final solely because repository CI is green. GA requires the physical target-Mac real-model gate above. Public downloadable distribution additionally requires the distribution gate. Repository governance should also be enabled before treating `main` as a professionally controlled release branch.
+Do not change the release line to `4.0.0` final solely because repository CI is green. GA requires verified target-Mac evidence and repository governance. Public downloadable distribution additionally requires Apple notarization/Gatekeeper evidence. The final tag is mechanically blocked until the evidence validator passes.
