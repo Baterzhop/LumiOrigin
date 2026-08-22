@@ -5,6 +5,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from lumi_core import __version__
+
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "lumi_version.py"
 PYPROJECT = ROOT / "services" / "core" / "pyproject.toml"
@@ -24,6 +26,10 @@ def test_release_version_helper_matches_pyproject() -> None:
         text=True,
     )
     assert result.stdout.strip() == expected
+
+
+def test_core_module_version_matches_project_version() -> None:
+    assert __version__ == _project_version()
 
 
 def test_release_artifact_name_is_derived_from_project_version() -> None:
