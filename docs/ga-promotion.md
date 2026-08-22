@@ -16,23 +16,11 @@ From the final repository-ready `main`:
 git switch main
 git pull --ff-only
 git switch -c lumi-v4-ga-candidate
-a python3 scripts/prepare_ga_candidate.py
-python3 scripts/prepare_ga_candidate.py --apply
-```
-
-(The stray `a` above is not a command; use only the two `python3` lines below if copying commands.)
-
-Correct copyable sequence:
-
-```bash
-git switch main
-git pull --ff-only
-git switch -c lumi-v4-ga-candidate
 python3 scripts/prepare_ga_candidate.py
 python3 scripts/prepare_ga_candidate.py --apply
 ```
 
-The preparation tool refuses `main`, refuses a dirty working tree, and changes only the release-version markers needed for the final candidate. Review the diff and run the full V4 CI on the exact candidate commit.
+The first invocation is read-only and shows the exact promotion plan. The second refuses `main`, refuses a dirty working tree, and changes only the release-version markers needed for the final candidate. Review the diff and run the full V4 CI on the exact candidate commit.
 
 Do not add feature work after this point.
 
