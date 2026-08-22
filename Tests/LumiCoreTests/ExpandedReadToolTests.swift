@@ -149,7 +149,8 @@ final class ExpandedReadToolTests: XCTestCase {
             ],
             origin: .agent
         )
-        XCTAssertEqual((await runtime.execute(calendarCall)).status, .confirmationRequired)
+        let pendingCalendar = await runtime.execute(calendarCall)
+        XCTAssertEqual(pendingCalendar.status, .confirmationRequired)
         let approvedCalendar = await runtime.execute(
             calendarCall,
             confirmation: ToolConfirmation(callID: calendarCall.id, approved: true)
