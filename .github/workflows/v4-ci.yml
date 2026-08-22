@@ -210,3 +210,75 @@ jobs:
           raise SystemExit("Installed Core did not become ready")
           PY
           "$VENV/bin/lumi-core" acceptance --base-url http://127.0.0.1:8793
+
+  macos-ga-orchestration-smoke:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Lumi into production-style user locations
+        run: PYTHON=python3 bash scripts/install_lumi.sh
+      - name: Configure deterministic primary model for the native managed Core
+        run: |
+          defaults write app.lumi.desktop Lumi.Model.OllamaServerURL "http://127.0.0.1:11435"
+          defaults write app.lumi.desktop Lumi.Model.ChatModel "lumi-ci-model"
+          defaults write app.lumi.desktop Lumi.Model.EmbeddingModel "lumi-ci-embed"
+          defaults write app.lumi.desktop Lumi.Model.DenseRetrieval -bool true
+          defaults write app.lumi.desktop Lumi.Setup.Completed -bool true
+      - name: Start deterministic Ollama-compatible model
+        run: |
+          VENV="$HOME/Library/Application Support/Lumi/runtime/venv"
+          "$VENV/bin/python" scripts/mock_ollama.py --port 11435 > "${RUNNER_TEMP}/lumi-ga-mock-ollama.log" 2>&1 &
+          echo $! > "${RUNNER_TEMP}/lumi-ga-mock-ollama.pid"
+          "$VENV/bin/python" - <<'PY'
+          import time
+          import httpx
+          deadline = time.time() + 20
+          while time.time() < deadline:
+              try:
+                  response = httpx.get("http://127.0.0.1:11435/api/tags", timeout=1)
+                  if response.status_code == 200:
+                      raise SystemExit(0)
+              except Exception:
+                  pass
+              time.sleep(0.25)
+          raise SystemExit("Mock Ollama did not become ready")
+          PY
+      - name: Execute installed-app GA orchestration
+        run: |
+          VENV="$HOME/Library/Application Support/Lumi/runtime/venv"
+          "$VENV/bin/python" scripts/ga_acceptance_macos.py --output "${RUNNER_TEMP}/lumi-ga-target-evidence.json"
+          "$VENV/bin/python" - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          evidence = Path(os.environ["RUNNER_TEMP"]) / "lumi-ga-target-evidence.json"
+          payload = json.loads(evidence.read_text(encoding="utf-8"))
+          target = payload.get("target_mac") or {}
+          assert target.get("ok") is True, target
+          assert target.get("fallback_false") is True, target
+          assert target.get("grounded_citation_ok") is True, target
+          assert target.get("durable_memory_ok") is True, target
+          assert target.get("approval_gated_write_ok") is True, target
+          assert target.get("backup_restore_copy_ok") is True, target
+          assert target.get("shutdown_ownership_ok") is True, target
+          PY
+      - name: Collect GA orchestration evidence and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumi-ga-orchestration-smoke
+          path: |
+            ${{ runner.temp }}/lumi-ga-target-evidence.json
+            ${{ runner.temp }}/lumi-ga-mock-ollama.log
+            ~/Library/Logs/Lumi/core.log
+          if-no-files-found: ignore
+      - name: Stop GA orchestration processes
+        if: always()
+        run: |
+          osascript -e 'tell application "Lumi" to quit' >/dev/null 2>&1 || true
+          if [[ -f "${RUNNER_TEMP}/lumi-ga-mock-ollama.pid" ]]; then
+            kill "$(cat "${RUNNER_TEMP}/lumi-ga-mock-ollama.pid")" >/dev/null 2>&1 || true
+          fi
