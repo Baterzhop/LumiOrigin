@@ -146,24 +146,27 @@ public struct SearchWorkspaceTextTool: LumiTool, Sendable {
                   data.count <= sandbox.maximumReadBytes,
                   let text = String(data: data, encoding: .utf8) else { continue }
 
-            let lower = text.lowercased()
-            let needle = query.lowercased()
-            var searchStart = lower.startIndex
-
-            while searchStart < lower.endIndex,
-                  let range = lower.range(of: needle, range: searchStart..<lower.endIndex) {
-                let lowerOffset = lower.distance(from: lower.startIndex, to: range.lowerBound)
-                let upperOffset = lower.distance(from: lower.startIndex, to: range.upperBound)
-                let startOffset = max(0, lowerOffset - maximumExcerptCharacters / 2)
-                let endOffset = min(text.count, upperOffset + maximumExcerptCharacters / 2)
-                let start = text.index(text.startIndex, offsetBy: startOffset)
-                let end = text.index(text.startIndex, offsetBy: endOffset)
+            var searchStart = text.startIndex
+            while searchStart < text.endIndex,
+                  let range = text.range(
+                    of: query,
+                    options: [.caseInsensitive, .diacriticInsensitive],
+                    range: searchStart..<text.endIndex,
+                    locale: Locale(identifier: "en_US_POSIX")
+                  ) {
+                let matchOffset = text.distance(from: text.startIndex, to: range.lowerBound)
+                let start = text.index(
+                    range.lowerBound,
+                    offsetBy: -min(maximumExcerptCharacters / 2, text.distance(from: text.startIndex, to: range.lowerBound))
+                )
+                let remaining = text.distance(from: range.upperBound, to: text.endIndex)
+                let end = text.index(range.upperBound, offsetBy: min(maximumExcerptCharacters / 2, remaining))
                 let excerpt = String(text[start..<end]).replacingOccurrences(of: "\u{0000}", with: "")
 
                 matches.append(.object([
                     "path": .string(relative),
                     "excerpt": .string(String(excerpt.prefix(maximumExcerptCharacters))),
-                    "characterOffset": .integer(lowerOffset)
+                    "characterOffset": .integer(matchOffset)
                 ]))
 
                 if matches.count >= requestedLimit {
