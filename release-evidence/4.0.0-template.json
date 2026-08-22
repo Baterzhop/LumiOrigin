@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "version": "4.0.0",
+  "candidate_commit": "0000000000000000000000000000000000000000",
+  "target_mac": {
+    "ok": false,
+    "timestamp_utc": "1970-01-01T00:00:00Z",
+    "macos_version": "",
+    "app_version": "4.0.0rc5",
+    "core_version": "4.0.0rc5",
+    "provider": "",
+    "model": "",
+    "real_model_ok": false,
+    "fallback_false": false,
+    "restart_ok": false,
+    "durable_memory_ok": false,
+    "grounded_citation_ok": false,
+    "read_tool_ok": false,
+    "approval_gated_write_ok": false,
+    "backup_restore_copy_ok": false,
+    "shutdown_ownership_ok": false
+  },
+  "governance": {
+    "main_protected": false,
+    "pull_requests_required": false,
+    "v4_ci_required": false,
+    "force_push_blocked": false,
+    "deletion_blocked": false
+  },
+  "distribution": {
+    "public": false,
+    "notarization_ok": false,
+    "codesign_ok": false,
+    "notary_status": "NotRun",
+    "stapler_ok": false,
+    "gatekeeper_ok": false,
+    "artifact_sha256": ""
+  }
+}
