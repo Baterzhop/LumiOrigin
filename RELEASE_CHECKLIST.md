@@ -1,111 +1,165 @@
-# Lumi V4 RC5 Release Checklist
+# Lumi V4 4.0.0 GA Release Checklist
 
-A release candidate is considered repository-ready only when every automatable item below is green on the exact candidate commit.
+This checklist is the canonical promotion path from the final RC candidate to `4.0.0` GA.
 
-## Automated gates
+## Automated repository gates
 
-Verified on RC5 candidate head `dc97f298a4675b3fffb7f5511633857065d14d47` before merge to `main` as `02a14aded827267a7a1f768e45646499dbba21f5`.
+A candidate is repository-ready only when all five required V4 CI jobs are green on the PR merge candidate:
 
-- [x] Python dependency installation and `pip check` on Ubuntu and macOS.
-- [x] `lumi-core doctor --initialize --no-model --require-database`.
-- [x] Full Python unit/API/security/RAG/memory/tool/Developer-Agent/acceptance tests.
-- [x] Deterministic multilingual RAG regression gate.
-- [x] Deterministic multilingual memory regression gate.
-- [x] Live fallback HTTP/SSE acceptance through the packaged `lumi-core acceptance` command.
-- [x] Live primary-model + dense-embedding acceptance with `--require-model` against the deterministic Ollama-compatible CI server.
-- [x] Python wheel and source distribution build + clean-environment wheel smoke.
-- [x] Installed wheel exposes `lumi-core acceptance` without repository source-path dependencies.
-- [x] Python release artifacts produce and verify a valid `SHA256SUMS` manifest.
-- [x] Swift debug build and tests.
-- [x] Native Core URL security tests: loopback HTTP accepted, remote HTTP rejected, remote HTTPS accepted, embedded credentials/query/fragment rejected.
-- [x] Native Ollama server URL uses the same safe boundary.
-- [x] Model-name validation rejects empty/whitespace/control-character names.
-- [x] Saved model settings map to `LUMI_OLLAMA_URL`, `LUMI_OLLAMA_EMBED_URL`, `LUMI_OLLAMA_MODEL`, `LUMI_EMBEDDING_MODEL` and `LUMI_RAG_DENSE` for the managed Core.
-- [x] Explicit process environment values are never overwritten by saved model settings.
-- [x] Ollama model discovery decodes/sorts/deduplicates `GET /api/tags` using injectable typed HTTP transport.
-- [x] First-run setup surface builds and can intentionally select a real model or continue in fallback mode.
-- [x] Native acceptance configuration keeps Core API keys out of command-line arguments.
-- [x] Native Readiness Center builds and runs the installed acceptance command model.
-- [x] Native diagnostics surface builds and remains metadata-only by design.
-- [x] macOS release app bundle build, plist lint and code-sign verification.
-- [x] macOS RC5 ZIP produces a matching `.sha256` file and checksum verification passes.
-- [x] `install_lumi.sh` production-style install on a clean macOS runner.
-- [x] Stable runtime exists at `~/Library/Application Support/Lumi/runtime/venv/bin/lumi-core`.
-- [x] Installed-runtime doctor passes.
-- [x] Installed runtime exposes the packaged acceptance command.
-- [x] Live HTTP/SSE/RAG/memory/tools/backup acceptance passes when invoked by the installed `lumi-core` executable.
-- [x] Developer-ID/notarization entrypoint passes `bash -n` and fails closed without required credentials.
+- [x] `core (ubuntu-latest, 3.12)`
+- [x] `core (macos-14, 3.12)`
+- [x] `macos-client`
+- [x] `macos-install-smoke`
+- [x] `macos-ga-orchestration-smoke`
 
-## Target-Mac gate
+These jobs cover dependency integrity, database doctor/migrations, unit/API/security/RAG/memory/tool/Developer-Agent tests, multilingual evals, fallback and primary-model acceptance, wheel/sdist verification, Swift build/tests, app packaging, production-style installation, managed Core lifecycle and the full hosted GA orchestration.
 
-This cannot be truthfully completed by GitHub-hosted runners because it depends on the physical Mac and the actual installed local model. The authoritative external checklist is GitHub issue #44.
+The hosted macOS GA orchestration has already proven the release helper itself end-to-end with a deterministic primary model, including:
 
-After installing RC5 and selecting the real Ollama model in **Finish Lumi setup** / **Lumi → Settings**, run the one-command physical acceptance from the repository with the installed Core Python:
+- managed `Lumi.app` → Core startup/shutdown;
+- `fallback=false` primary-model operation;
+- grounded document citation;
+- durable memory across restart;
+- read-only tool execution;
+- exact approval-gated write execution;
+- verified backup and restore into a disposable copy.
+
+## External gate 1 — physical target Mac
+
+Use the exact commit you intend to promote. Install Lumi and configure the real local Ollama models, then run:
 
 ```bash
 "$HOME/Library/Application Support/Lumi/runtime/venv/bin/python" scripts/ga_acceptance_macos.py
 ```
 
-The probe is fail-closed and automatically verifies:
-
-- managed Core startup from `Lumi.app`;
-- real-model HTTP + SSE acceptance with `fallback=false`;
-- a grounded answer against a real temporary Markdown document with matching citation metadata;
-- durable memory surviving a full app/Core quit and restart;
-- read-only workspace tool execution;
-- an exact persisted write proposal staying blocked until explicit TaskRuntime approval;
-- backup creation and full restore/integrity verification against a disposable database copy;
-- app-owned Core shutdown ownership.
-
-It writes non-secret machine-readable target evidence to:
+Expected output:
 
 ```text
 ~/Library/Application Support/Lumi/ga-evidence/4.0.0-ga.json
 ```
 
-The target section is complete only when `target_mac.ok` is `true`. The script intentionally does **not** fake repository-governance or Apple-notarization evidence.
+Required:
 
-## Distribution gate
+- [ ] `target_mac.ok=true`
+- [ ] real model selected and `fallback_false=true`
+- [ ] grounded citation passes
+- [ ] restart passes
+- [ ] durable memory passes
+- [ ] read tool passes
+- [ ] approval-gated write passes
+- [ ] backup/restore-copy passes
+- [ ] app-owned Core shutdown passes
 
-For local use, ad-hoc code signing is sufficient. Public distribution requires real Apple credentials. The repository-side path is:
+If runtime code changes after this candidate commit, the physical acceptance is invalid and must be repeated.
+
+## External gate 2 — repository governance
+
+`main` must be protected. Apply and verify the canonical rule with an administrator-authenticated GitHub CLI session:
 
 ```bash
-xcrun notarytool store-credentials "lumi-notary" ...
+TARGET="$HOME/Library/Application Support/Lumi/ga-evidence/4.0.0-ga.json"
+bash scripts/configure_branch_protection.sh \
+  --repository Baterzhop/LumiOrigin \
+  --branch main \
+  --evidence "$TARGET" \
+  --apply
+```
+
+Required GitHub state:
+
+- [ ] pull requests required
+- [ ] strict required status checks enabled
+- [ ] all five V4 jobs required
+- [ ] force pushes blocked
+- [ ] branch deletion blocked
+- [ ] conversation resolution required
+
+The script updates governance evidence only after GitHub confirms the active policy.
+
+## Promotion to 4.0.0
+
+After physical acceptance, promote the candidate through a normal PR. Only release metadata may change after `candidate_commit`:
+
+- `services/core/pyproject.toml`
+- `services/core/src/lumi_core/__init__.py`
+- `CHANGELOG.md`
+- `README.md`
+- `RELEASE_CHECKLIST.md`
+- `docs/release.md`
+- `release-evidence/4.0.0-ga.json`
+
+Set both canonical Core versions to `4.0.0` and run the normal five-gate V4 CI. Any runtime or unapproved-file change invalidates the physical candidate.
+
+## Optional public distribution gate — Apple
+
+Public downloadable distribution additionally requires real Developer ID/notarization evidence after the promotion branch is versioned `4.0.0`:
+
+```bash
 export LUMI_CODESIGN_IDENTITY="Developer ID Application: ..."
 export LUMI_NOTARY_PROFILE="lumi-notary"
 bash scripts/notarize_macos_app.sh
 ```
 
-After successful Developer-ID verification, Apple notarization, stapling and Gatekeeper assessment, the script now also emits:
+Required:
+
+- [ ] Developer-ID codesign verification
+- [ ] Apple notary status `Accepted`
+- [ ] stapling + stapler validation
+- [ ] Gatekeeper assessment
+- [ ] post-staple ZIP checksum verification
+
+Evidence output:
 
 ```text
-dist/Lumi-macOS-<version>.notarization.json
+dist/Lumi-macOS-4.0.0.notarization.json
 ```
 
-This fragment contains only non-secret verification state and the final artifact SHA-256.
+## Compose canonical GA evidence
 
-## Repository governance gate
+No manual JSON editing is required.
 
-`main` must be protected by a GitHub ruleset requiring pull requests and V4 CI before merge, with force-push/deletion protection. This is tracked in issue #53 because the available repository integration cannot mutate branch-protection/ruleset settings.
+Local/non-public GA:
 
-## Final evidence gate
+```bash
+python3 scripts/compose_ga_evidence.py "$TARGET" \
+  --output release-evidence/4.0.0-ga.json
+```
 
-`release-evidence/4.0.0-template.json` defines the final evidence contract. Before creating the final `v4.0.0` tag, populate `release-evidence/4.0.0-ga.json` from verified target-Mac/governance evidence and, for public distribution, the notarization evidence fragment.
+Public GA:
 
-Validate it locally:
+```bash
+python3 scripts/compose_ga_evidence.py "$TARGET" \
+  --notarization dist/Lumi-macOS-4.0.0.notarization.json \
+  --public \
+  --output release-evidence/4.0.0-ga.json
+```
+
+Validate:
 
 ```bash
 python3 scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json
+python3 scripts/verify_ga_promotion.py release-evidence/4.0.0-ga.json --release-ref HEAD
 ```
 
-For public distribution:
+Public distribution also requires:
 
 ```bash
 python3 scripts/validate_ga_evidence.py release-evidence/4.0.0-ga.json --public
 ```
 
-The release workflow now fails closed for the final `v4.0.0` tag if this evidence is missing or incomplete. RC builds remain possible without falsely promoting the project to GA.
+## Final tag
+
+Create `v4.0.0` only after all evidence and promotion checks pass.
+
+The release workflow independently enforces:
+
+1. tag equals the canonical project version;
+2. final GA evidence validates;
+3. `candidate_commit` exists and is an ancestor of the tag;
+4. physical target app/Core versions match that candidate;
+5. final runtime version is exactly `4.0.0`;
+6. no runtime or unapproved files changed after physical acceptance.
 
 ## GA invariant
 
-Do not change the release line to `4.0.0` final solely because repository CI is green. GA requires verified target-Mac evidence and repository governance. Public downloadable distribution additionally requires Apple notarization/Gatekeeper evidence. The final tag is mechanically blocked until the evidence validator passes.
+Repository CI alone is not GA evidence. Lumi V4 may be called `4.0.0` GA only after real physical target-Mac evidence and real repository governance pass. Public distribution additionally requires real Apple notarization/Gatekeeper evidence.
