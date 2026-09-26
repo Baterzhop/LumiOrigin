@@ -22,13 +22,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - name: Validate release and shell entrypoints
         run: |
-          python -m py_compile scripts/lumi_version.py scripts/validate_ga_evidence.py scripts/ga_acceptance_macos.py
+          python -m py_compile scripts/lumi_version.py scripts/validate_ga_evidence.py scripts/ga_acceptance_macos.py scripts/compose_ga_evidence.py scripts/verify_ga_promotion.py
           bash -n scripts/install_lumi.sh scripts/start_lumi.sh scripts/build_macos_app.sh scripts/notarize_macos_app.sh
+      - name: Verify committed GA evidence on the PR merge candidate
+        run: |
+          if [[ -e release-evidence/4.0.0-ga.json ]]; then
+            python scripts/verify_ga_promotion.py release-evidence/4.0.0-ga.json --release-ref HEAD
+          fi
       - name: Install tested dependency set
         run: |
           python -m pip install -c services/core/requirements.lock -e "services/core[dev]"
@@ -267,6 +274,7 @@ jobs:
           evidence = Path(os.environ["RUNNER_TEMP"]) / "lumi-ga-target-evidence.json"
           payload = json.loads(evidence.read_text(encoding="utf-8"))
           target = payload.get("target_mac") or {}
+          assert target.get("environment") == "hosted_ci", target
           assert target.get("ok") is True, target
           assert target.get("fallback_false") is True, target
           assert target.get("grounded_citation_ok") is True, target

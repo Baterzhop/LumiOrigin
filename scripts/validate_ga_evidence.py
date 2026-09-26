@@ -30,6 +30,7 @@ def validate(payload: object, *, require_public_distribution: bool = False) -> l
     target = payload.get("target_mac")
     _require(isinstance(target, dict), "target_mac_missing", errors)
     if isinstance(target, dict):
+        _require(target.get("environment") == "physical_mac", "target_mac.environment_must_be_physical_mac", errors)
         for key in (
             "ok",
             "real_model_ok",
@@ -47,6 +48,7 @@ def validate(payload: object, *, require_public_distribution: bool = False) -> l
         _require(bool(str(target.get("model") or "").strip()), "target_mac.model_required", errors)
         _require(bool(str(target.get("macos_version") or "").strip()), "target_mac.macos_version_required", errors)
         _require(bool(str(target.get("core_version") or "").strip()), "target_mac.core_version_required", errors)
+        _require(bool(str(target.get("app_version") or "").strip()), "target_mac.app_version_required", errors)
         timestamp = target.get("timestamp_utc")
         if isinstance(timestamp, str):
             try:
@@ -65,6 +67,7 @@ def validate(payload: object, *, require_public_distribution: bool = False) -> l
     distribution = payload.get("distribution")
     _require(isinstance(distribution, dict), "distribution_missing", errors)
     if isinstance(distribution, dict):
+        _require(type(distribution.get("public")) is bool, "distribution.public_must_be_boolean", errors)
         public = distribution.get("public") is True
         if require_public_distribution:
             _require(public, "distribution.public_must_be_true", errors)
@@ -74,6 +77,8 @@ def validate(payload: object, *, require_public_distribution: bool = False) -> l
             _require(distribution.get("notary_status") == "Accepted", "distribution.notary_status_must_be_Accepted", errors)
             checksum = distribution.get("artifact_sha256")
             _require(isinstance(checksum, str) and bool(SHA256_RE.fullmatch(checksum)), "distribution.artifact_sha256_invalid", errors)
+            source = distribution.get("source_commit")
+            _require(isinstance(source, str) and bool(SHA_RE.fullmatch(source)), "distribution.source_commit_invalid", errors)
 
     return errors
 

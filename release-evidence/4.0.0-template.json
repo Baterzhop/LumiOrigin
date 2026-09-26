@@ -3,6 +3,7 @@
   "version": "4.0.0",
   "candidate_commit": "0000000000000000000000000000000000000000",
   "target_mac": {
+    "environment": "physical_mac",
     "ok": false,
     "timestamp_utc": "1970-01-01T00:00:00Z",
     "macos_version": "",

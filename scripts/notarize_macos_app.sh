@@ -27,6 +27,11 @@ APP="$OUT_DIR/Lumi.app"
 ZIP="$OUT_DIR/Lumi-macOS-$VERSION.zip"
 CHECKSUM="$ZIP.sha256"
 EVIDENCE="$OUT_DIR/Lumi-macOS-$VERSION.notarization.json"
+SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+[[ -z "$(git -C "$ROOT" status --porcelain=v1)" ]] || {
+  echo "Commit source changes before notarizing a release." >&2
+  exit 2
+}
 
 export LUMI_CODESIGN_IDENTITY="$SIGN_IDENTITY"
 export LUMI_RELEASE_DIR="$OUT_DIR"
@@ -51,7 +56,9 @@ ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 )
 
 ARTIFACT_SHA256="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
-export VERSION ARTIFACT_SHA256 EVIDENCE
+test "$(git -C "$ROOT" rev-parse HEAD)" = "$SOURCE_COMMIT"
+test -z "$(git -C "$ROOT" status --porcelain=v1)"
+export VERSION ARTIFACT_SHA256 EVIDENCE SOURCE_COMMIT
 python3 - <<'PY'
 from datetime import datetime, timezone
 import json
@@ -60,6 +67,7 @@ from pathlib import Path
 
 payload = {
     "version": os.environ["VERSION"],
+    "source_commit": os.environ["SOURCE_COMMIT"],
     "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "public": True,
     "notarization_ok": True,
