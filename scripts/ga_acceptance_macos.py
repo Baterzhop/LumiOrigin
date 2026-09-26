@@ -108,6 +108,8 @@ def _app_version(app: Path) -> str:
 
 
 def _candidate_commit(root: Path) -> str:
+    if _run(["git", "-C", str(root), "status", "--porcelain=v1"]).stdout:
+        raise RuntimeError("physical_acceptance_requires_clean_candidate_checkout")
     return _run(["git", "-C", str(root), "rev-parse", "HEAD"]).stdout.strip()
 
 
@@ -223,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         "candidate_commit": _candidate_commit(root),
         "target_mac": {
             "ok": False,
+            "environment": "hosted_ci" if os.getenv("CI") or os.getenv("GITHUB_ACTIONS") else "physical_mac",
             "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "macos_version": platform.mac_ver()[0],
             "app_version": _app_version(app),
@@ -361,6 +364,8 @@ def main(argv: list[str] | None = None) -> int:
             "real_model_ok", "fallback_false", "restart_ok", "durable_memory_ok", "grounded_citation_ok",
             "read_tool_ok", "approval_gated_write_ok", "backup_restore_copy_ok", "shutdown_ownership_ok",
         ]
+        if _candidate_commit(root) != result["candidate_commit"]:
+            raise RuntimeError("candidate_changed_during_acceptance")
         target["ok"] = all(target.get(key) is True for key in required)
     except Exception as exc:
         target["error"] = f"{type(exc).__name__}:{exc}"

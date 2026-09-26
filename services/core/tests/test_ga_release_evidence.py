@@ -19,6 +19,7 @@ def _valid_payload() -> dict:
         "version": "4.0.0",
         "candidate_commit": "a" * 40,
         "target_mac": {
+            "environment": "physical_mac",
             "ok": True,
             "timestamp_utc": "2026-08-22T08:00:00Z",
             "macos_version": "15.6",
@@ -108,6 +109,7 @@ def test_public_distribution_accepts_complete_notarization_evidence(tmp_path):
             "stapler_ok": True,
             "gatekeeper_ok": True,
             "artifact_sha256": "b" * 64,
+            "source_commit": "a" * 40,
         }
     )
     result = _run_validator(tmp_path, payload, "--public")
@@ -129,3 +131,33 @@ def test_ga_tool_boundary_helper_executes_real_task_runtime(tmp_path):
     read_ok, write_ok = asyncio.run(module._verify_tool_boundary(tmp_path))
     assert read_ok is True
     assert write_ok is True
+
+
+def test_hosted_ci_evidence_cannot_satisfy_physical_gate(tmp_path):
+    payload = _valid_payload()
+    payload["target_mac"]["environment"] = "hosted_ci"
+    result = _run_validator(tmp_path, payload)
+    assert result.returncode == 1
+    assert "target_mac.environment_must_be_physical_mac" in result.stdout
+
+
+def test_public_distribution_cannot_omit_source_commit(tmp_path):
+    payload = _valid_payload()
+    payload["distribution"].update(public=True, notarization_ok=True, codesign_ok=True,
+                                   notary_status="Accepted", stapler_ok=True, gatekeeper_ok=True,
+                                   artifact_sha256="b" * 64)
+    result = _run_validator(tmp_path, payload)
+    assert result.returncode == 1
+    assert "distribution.source_commit_invalid" in result.stdout
+
+
+def test_physical_probe_rejects_dirty_candidate(tmp_path):
+    module = _load_mac_acceptance_module()
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / "uncommitted.py").write_text("changed = True\n")
+    try:
+        module._candidate_commit(tmp_path)
+    except RuntimeError as exc:
+        assert "clean_candidate_checkout" in str(exc)
+    else:
+        raise AssertionError("Uncommitted source must never be labeled with a candidate SHA")

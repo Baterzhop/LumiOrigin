@@ -132,7 +132,7 @@ The hosted GA orchestration launches the installed `Lumi.app`, exercises its man
 
 ## Physical target-Mac GA acceptance
 
-Use the exact commit you intend to promote. Install that candidate, select the real local chat and embedding models, then run:
+Use a clean checkout of the exact commit you intend to promote; keep evidence outputs outside the checkout. Install that candidate, select the real local chat and embedding models, then run:
 
 ```bash
 "$HOME/Library/Application Support/Lumi/runtime/venv/bin/python" scripts/ga_acceptance_macos.py
@@ -176,7 +176,7 @@ The required policy includes pull-request flow, strict status checks for all fiv
 
 ## Promote the accepted candidate to 4.0.0
 
-After physical acceptance, only release metadata may differ from the accepted candidate. Set both canonical Core version locations to `4.0.0` through a normal PR and run the five-gate CI again.
+After physical acceptance, only release metadata may differ from the accepted candidate. Change only the version values in `services/core/pyproject.toml` (the canonical source) and its synchronized runtime marker to `4.0.0` through a normal PR and run the five-gate CI again.
 
 The final release verifier allow-list is intentionally narrow:
 
@@ -191,6 +191,10 @@ release-evidence/4.0.0-ga.json
 ```
 
 Any other changed file after `candidate_commit` blocks the final tag and requires new physical acceptance.
+The two version files are compared byte for byte after replacing only their version
+values: dependency, build-configuration and executable-code changes are forbidden.
+Metadata paths must remain regular non-executable files. Candidates must themselves
+be `4.0.0` or a `4.0.0rcN`, and app/Core versions in the evidence must match them.
 
 ## Public distribution: Developer ID + Apple notarization
 
@@ -224,12 +228,25 @@ dist/Lumi-macOS-4.0.0.notarization.json
 
 ## Compose final evidence
 
-No manual JSON editing is required.
+No manual JSON editing is required. Set `CANDIDATE` to the full commit SHA recorded
+when physical acceptance was run (do not substitute the later promotion HEAD).
+Commit the version-only promotion and release documents before composing evidence;
+the composer verifies the committed HEAD against that candidate and refuses dirty
+source trees. Only the final evidence file may be uncommitted. Inputs should be
+kept outside the checkout; repeated composition of the same inputs produces
+identical UTF-8/LF JSON bytes and replaces the output atomically only after validation.
+
+After composition, commit `release-evidence/4.0.0-ga.json` and run the verifier.
+It checks the evidence stored in that exact release commit, including on the PR
+merge candidate in both Core CI jobs. A missing evidence file is allowed for
+candidate-development CI, but never for a final-version release artifact build,
+including a manual workflow dispatch.
 
 Local/non-public GA:
 
 ```bash
 python3 scripts/compose_ga_evidence.py "$TARGET" \
+  --expected-candidate "$CANDIDATE" \
   --output release-evidence/4.0.0-ga.json
 ```
 
@@ -237,6 +254,7 @@ Public GA:
 
 ```bash
 python3 scripts/compose_ga_evidence.py "$TARGET" \
+  --expected-candidate "$CANDIDATE" \
   --notarization dist/Lumi-macOS-4.0.0.notarization.json \
   --public \
   --output release-evidence/4.0.0-ga.json
@@ -277,3 +295,23 @@ The workflow fetches full Git history specifically so the promotion proof cannot
 ## GA rule
 
 Green hosted CI is necessary but not sufficient. Lumi V4 is `4.0.0` GA only when physical target-Mac evidence and repository governance are real. Public distribution additionally requires real Developer-ID/notarization/Gatekeeper evidence.
+
+## Evidence provenance boundaries
+
+Physical acceptance records `target_mac.environment=physical_mac`; hosted CI records
+`hosted_ci`, which the final validator rejects even when all smoke checks pass.
+The probe refuses source changes before or during the run. The operator must still
+install the stated candidate on the physical Mac and use the actual local model;
+Git provenance checks do not independently attest to the physical machine.
+
+Notarization must run from a clean, committed `4.0.0` promotion checkout. Its fragment
+records `source_commit` and the post-staple ZIP checksum. The composer and verifier
+require that source to descend from the physically tested candidate, precede the
+release, and have no non-metadata drift from it. Keep and distribute that exact
+notarized ZIP: the ad-hoc ZIP rebuilt by hosted release CI is not the notarized
+artifact, and the presence of Apple evidence does not make it one.
+
+These checks validate supplied evidence and Git history; they do not apply branch
+protection or execute Apple/physical-Mac gates. Those gates remain external until
+actually performed. Old reports without environment/source provenance must be
+regenerated through the updated producers.

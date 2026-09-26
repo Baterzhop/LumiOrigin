@@ -15,7 +15,12 @@ _VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*(?:[A-Za-z0-9._+-]*)$")
 
 
 def project_version() -> str:
-    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    return project_version_from_text(PYPROJECT.read_text(encoding="utf-8"))
+
+
+def project_version_from_text(text: str) -> str:
+    """Resolve the same canonical version from a checkout or a committed blob."""
+    data = tomllib.loads(text)
     version = str(data["project"]["version"]).strip()
     if not version or not _VERSION_RE.fullmatch(version):
         raise SystemExit(f"Invalid Lumi project version in {PYPROJECT}: {version!r}")
