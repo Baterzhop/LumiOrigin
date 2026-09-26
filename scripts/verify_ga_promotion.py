@@ -98,7 +98,7 @@ def _verify(repo: Path, evidence: dict, release_ref: str, *, require_committed_e
     if errors:
         return [f"evidence:{error}" for error in errors]
     candidate = evidence["candidate_commit"]
-    if _git(repo, "cat-file", "-e", f"{candidate}^{{commit}}", check=False).returncode:
+    if _git(repo, "cat-file", "-t", candidate, check=False).stdout.strip() != "commit":
         return ["candidate_commit_not_found_in_repository"]
     resolved = _git(repo, "rev-parse", "--verify", "--end-of-options", f"{release_ref}^{{commit}}", check=False)
     if resolved.returncode:
@@ -125,7 +125,9 @@ def _verify(repo: Path, evidence: dict, release_ref: str, *, require_committed_e
 
     if evidence["distribution"]["public"]:
         source = evidence["distribution"]["source_commit"]
-        if _git(repo, "merge-base", "--is-ancestor", candidate, source, check=False).returncode:
+        if _git(repo, "cat-file", "-t", source, check=False).stdout.strip() != "commit":
+            errors.append("notarization_source_commit_not_found_in_repository")
+        elif _git(repo, "merge-base", "--is-ancestor", candidate, source, check=False).returncode:
             errors.append("notarization_source_is_not_descendant_of_candidate")
         elif _git(repo, "merge-base", "--is-ancestor", source, release, check=False).returncode:
             errors.append("notarization_source_is_not_ancestor_of_release")

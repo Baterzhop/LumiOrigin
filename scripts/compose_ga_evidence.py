@@ -68,7 +68,8 @@ def compose(target: dict, *, expected_candidate: str, notarization: dict | None 
     else:
         if notarization is not None:
             raise SystemExit("Notarization evidence was supplied without --public")
-        if (payload.get("distribution") or {}).get("public") is not False:
+        distribution = payload.get("distribution")
+        if not isinstance(distribution, dict) or distribution.get("public") is not False:
             raise SystemExit("Refusing to downgrade or infer the distribution mode; use --public with notarization evidence")
         payload["distribution"] = {
             "public": False,

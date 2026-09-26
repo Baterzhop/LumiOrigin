@@ -225,9 +225,12 @@ def test_promotion_rejects_metadata_mode_change(tmp_path):
     assert "release_metadata_not_regular_file" in result.stdout
 
 
-@pytest.mark.parametrize("change", ["missing", "unrelated", "wrong_version", "wrong_app", "different_evidence"])
+@pytest.mark.parametrize("change", ["missing", "tag_object", "unrelated", "wrong_version", "wrong_app", "different_evidence"])
 def test_promotion_rejects_incorrect_candidate_provenance(tmp_path, change):
     repo, candidate = _promotion_repo(tmp_path)
+    if change == "tag_object":
+        _git(repo, "tag", "-a", "candidate-tag", "-m", "not a commit object")
+        candidate = _git(repo, "rev-parse", "refs/tags/candidate-tag")
     if change == "unrelated":
         tree = _git(repo, "rev-parse", "HEAD^{tree}")
         candidate = _git(repo, "commit-tree", tree, "-m", "unrelated root")

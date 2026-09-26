@@ -33,7 +33,7 @@ jobs:
           bash -n scripts/install_lumi.sh scripts/start_lumi.sh scripts/build_macos_app.sh scripts/notarize_macos_app.sh
       - name: Verify committed GA evidence on the PR merge candidate
         run: |
-          if [[ -e release-evidence/4.0.0-ga.json ]]; then
+          if git cat-file -e HEAD:release-evidence/4.0.0-ga.json 2>/dev/null; then
             python scripts/verify_ga_promotion.py release-evidence/4.0.0-ga.json --release-ref HEAD
           fi
       - name: Install tested dependency set
